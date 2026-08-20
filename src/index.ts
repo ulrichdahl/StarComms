@@ -25,6 +25,7 @@ import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
 import { provisionGuild } from './pool/provisioning.js';
 import { closeSession, openSession, SessionError } from './session/lifecycle.js';
 import type { SessionMode } from './session/model.js';
+import { connectionFor, runSessionRelay } from './session/relay.js';
 import { FakeDriver, type SttDriver } from './detection/stt.js';
 
 async function main(): Promise<void> {
@@ -151,6 +152,91 @@ async function main(): Promise<void> {
         }
         throw err;
       }
+    },
+    hail: async (interaction) => {
+      const guild = interaction.guild;
+      if (guild === null) {
+        await interaction.reply({ content: 'this command must be used in a guild', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (cues === null) {
+        await interaction.editReply('hail failed: cue engine is not loaded');
+        return;
+      }
+      const targetCallsign = interaction.options.getString('target', true).trim();
+
+      const session = db.prepare(
+        `SELECT id, lead_user_id FROM sessions WHERE guild_id = ? AND ended_at IS NULL`,
+      ).get(guild.id) as { id: number; lead_user_id: string } | undefined;
+      if (session === undefined) {
+        await interaction.editReply('hail failed: no session is open in this guild — run /star-bridge open first.');
+        return;
+      }
+
+      const netRows = db.prepare(
+        `SELECT nato, bot_id FROM session_nets WHERE session_id = ?`,
+      ).all(session.id) as { nato: string; bot_id: string }[];
+      // Find the primary (bot_id === 'main') and the target by callsign
+      // (nato slug = lowercased-callsign-with-dashes, as inserted by
+      // openSession).
+      const primary = netRows.find((r) => r.bot_id === 'main');
+      const targetSlug = targetCallsign.toLowerCase().replace(/\s+/g, '-');
+      const target = netRows.find((r) => r.nato === targetSlug);
+      if (primary === undefined) {
+        await interaction.editReply('hail failed: no primary net in the current session');
+        return;
+      }
+      if (target === undefined) {
+        const avail = netRows.filter((r) => r.bot_id !== 'main').map((r) => r.nato).join(', ');
+        await interaction.editReply(`hail failed: unknown target \`${targetCallsign}\`. Available: ${avail}`);
+        return;
+      }
+      if (target.bot_id === primary.bot_id) {
+        await interaction.editReply('hail failed: primary net cannot be its own target');
+        return;
+      }
+
+      const mainClient = fleet.controllerClient();
+      const targetClient = fleet.clientFor(target.bot_id);
+      const mainUserId = mainClient.user?.id;
+      const targetUserId = targetClient.user?.id;
+      if (mainUserId === undefined || targetUserId === undefined) {
+        await interaction.editReply('hail failed: fleet not fully ready');
+        return;
+      }
+
+      const sourceConn = connectionFor(guild.id, mainUserId);
+      const targetConn = connectionFor(guild.id, targetUserId);
+      if (sourceConn === null || targetConn === null) {
+        await interaction.editReply('hail failed: session voice connections are not both live');
+        return;
+      }
+
+      const gRow = db.prepare(
+        `SELECT silence_close_ms, max_hold_ms FROM guilds WHERE id = ?`,
+      ).get(guild.id) as { silence_close_ms: number; max_hold_ms: number } | undefined;
+      const silenceCloseMs = gRow?.silence_close_ms ?? config.defaults.silenceCloseMs;
+      const maxHoldMs = gRow?.max_hold_ms ?? config.defaults.maxHoldMs;
+
+      await interaction.editReply(
+        `**Opening hail** → \`${targetCallsign}\`\n` +
+        `Cues play now; then speak in Command. Route closes on ${silenceCloseMs} ms silence or ${maxHoldMs} ms max-hold.`,
+      );
+
+      const result = await runSessionRelay({
+        sourceConnection: sourceConn,
+        targetConnection: targetConn,
+        cues,
+        commanderUserId: interaction.user.id,
+        silenceCloseMs,
+        maxHoldMs,
+      });
+
+      const summary = result.errorMessage !== null
+        ? `hail closed with error: ${result.errorMessage} (packets=${result.opusPackets})`
+        : `hail closed — ${result.closedBy} · ${result.opusPackets} opus packets · ${result.durationMs} ms`;
+      await interaction.followUp({ content: summary, flags: MessageFlags.Ephemeral });
     },
     close: async (interaction) => {
       const guild = interaction.guild;

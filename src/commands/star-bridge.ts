@@ -68,6 +68,19 @@ export function starBridgeCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         type: ApplicationCommandOptionType.Subcommand,
       },
       {
+        name: 'hail',
+        description: 'Open a one-shot voice route from primary to a target net (step-6a preview).',
+        type: ApplicationCommandOptionType.Subcommand,
+        options: [
+          {
+            name: 'target',
+            description: 'Target callsign in the current session (e.g. Alpha, Bravo, Charlie).',
+            type: ApplicationCommandOptionType.String,
+            required: true,
+          },
+        ],
+      },
+      {
         name: 'status',
         description: 'Report the fleet state for this guild.',
         type: ApplicationCommandOptionType.Subcommand,
