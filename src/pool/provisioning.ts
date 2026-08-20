@@ -179,6 +179,19 @@ async function ensureVoiceChannel(
     ).run(guild.id, nato);
   }
 
+  // Overwrites are deliberately minimal. Discord's rule: you can only grant
+  // permissions you hold yourself. If we grant SPEAK or PRIORITY_SPEAKER
+  // here, the controller must also have those guild-wide — an unnecessary
+  // scope expansion for the invite. Squad bots receive CONNECT/SPEAK from
+  // their own guild-level bot permissions (see README squad invite URL);
+  // this overwrite only needs to reveal the channel to squad-k and hide it
+  // from everyone else. The controller has MANAGE_CHANNELS at guild level
+  // so it needs no per-channel grant to modify the channel later.
+  //
+  // controllerUserId is retained in the signature because we may reintroduce
+  // an explicit controller overwrite when the wizard needs to hide/reveal
+  // the channel — step 5b.
+  void controllerUserId;
   const created = await guild.channels.create({
     name: channelName(nato),
     type: ChannelType.GuildVoice,
@@ -191,23 +204,9 @@ async function ensureVoiceChannel(
         deny: [PermissionFlagsBits.ViewChannel],
       },
       {
-        id: controllerUserId,
-        type: OverwriteType.Member,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.ManageChannels,
-          PermissionFlagsBits.ManageRoles,
-        ],
-      },
-      {
         id: squadUserId,
         type: OverwriteType.Member,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.Connect,
-          PermissionFlagsBits.Speak,
-          PermissionFlagsBits.PrioritySpeaker,
-        ],
+        allow: [PermissionFlagsBits.ViewChannel],
       },
     ],
   });

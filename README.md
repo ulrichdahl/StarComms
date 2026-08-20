@@ -67,9 +67,9 @@ For each application, in the [developer portal](https://discord.com/developers/a
     ```
     https://discord.com/oauth2/authorize?client_id=<CONTROLLER_APP_ID>&scope=bot%20applications.commands&permissions=402926608
     ```
-  - **Squad** (base voice permissions — grant `Speak` per-channel as needed):
+  - **Squad** (voice: View + Connect + Speak + Priority Speaker at the guild level, so pool channels inherit them without the controller having to grant them in overwrites):
     ```
-    https://discord.com/oauth2/authorize?client_id=<SQUAD_APP_ID>&scope=bot&permissions=1049600
+    https://discord.com/oauth2/authorize?client_id=<SQUAD_APP_ID>&scope=bot&permissions=3146752
     ```
 
 ### 2. Configure
