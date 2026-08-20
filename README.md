@@ -72,9 +72,9 @@ For each application, in the [developer portal](https://discord.com/developers/a
     ```
     https://discord.com/oauth2/authorize?client_id=<CONTROLLER_APP_ID>&scope=bot%20applications.commands&permissions=301026640
     ```
-  - **Squad** (voice: View + Connect + Speak + Priority Speaker at the guild level, so pool channels inherit them without the controller having to grant them in overwrites):
+  - **Squad** — voice permissions at the guild level so channels inherit them without the controller having to grant them in overwrites. `3147008 = 0x300500 = VIEW_CHANNEL (0x400) + PRIORITY_SPEAKER (0x100) + CONNECT (0x100000) + SPEAK (0x200000)`:
     ```
-    https://discord.com/oauth2/authorize?client_id=<SQUAD_APP_ID>&scope=bot&permissions=3146752
+    https://discord.com/oauth2/authorize?client_id=<SQUAD_APP_ID>&scope=bot&permissions=3147008
     ```
 
 ### 2. Configure
@@ -183,7 +183,7 @@ Alpha Ops, Bravo Ops, Charlie Ops. Same shape.
 | `open failed: this guild has not been initialised...` | Run `/star-bridge init` first. |
 | `open failed: a session is already open in this guild` | Run `/star-bridge close` first (or an earlier crash left a stale row — boot sweep will handle it, or delete the row from `data/starbridge.db`). |
 | `open failed: controller lacks MANAGE_CHANNELS...` | Re-invite the controller with the URL in step 5a — its permissions on your guild are too tight. |
-| Bots create the channels but never appear in them | Squad bots need Connect at guild level. Re-invite with permissions=3146752. |
+| Bots create the channels but never appear in them | Squad bots need Connect at guild level. Re-invite with permissions=3147008. |
 
 ## Running the blind relay (step 3)
 
