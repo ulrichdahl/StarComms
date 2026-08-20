@@ -79,28 +79,17 @@ async function main(): Promise<void> {
         return;
       }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const squadUserIds = new Map<string, string>();
-      for (const m of config.fleet) {
-        const id = fleet.clientFor(m.nato).user?.id;
-        if (id !== undefined) squadUserIds.set(m.nato, id);
-      }
-      const summary = await provisionGuild(
-        guild, fleet.controllerClient(), squadUserIds, config.fleet, config.defaults, db,
-      );
-      const lines = [
-        `**Star Bridge pool in ${summary.guildName}**`,
-        `category: \`${summary.categoryId}\``,
-        summary.created.length > 0
-          ? `created: ${summary.created.map((c) => `\`${c.name}\``).join(', ')}`
-          : 'created: (none)',
-        summary.reused.length > 0
-          ? `reused:  ${summary.reused.map((c) => `\`${c.name}\``).join(', ')}`
-          : 'reused: (none)',
+      const summary = await provisionGuild(guild, config.defaults, db);
+      const line = (label: string, id: string, created: boolean): string =>
+        `${label}: <#${id}>${created ? ' (created)' : ' (reused)'}`;
+      const body = [
+        `**Star Bridge init in ${summary.guildName}**`,
+        line('category', summary.categoryId, summary.categoryCreated),
+        line('control channel', summary.controlChannelId, summary.controlChannelCreated),
+        '',
+        'Voice channels are created per session; run `/star-bridge open` (step 5b) to start one.',
       ];
-      if (summary.errors.length > 0) {
-        lines.push(`errors: ${summary.errors.map((e) => `${e.nato}: ${e.message}`).join('; ')}`);
-      }
-      await interaction.editReply(lines.join('\n'));
+      await interaction.editReply(body.join('\n'));
     },
     status: async (interaction) => {
       const bots = fleet.states();

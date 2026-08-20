@@ -12,19 +12,32 @@ with their reasons.
 
 The spec (§2) puts the controller role on member Alfa — same application both
 registers slash commands AND holds a squad net. This project uses a **separate
-controller application** on top of N squad bots:
+controller application on double duty**: it runs slash commands + channel
+management AND occupies the main command net's voice channel.
 
-- Controller: registers `/star-bridge`, holds `MANAGE_CHANNELS`, `MANAGE_ROLES`,
-  `MOVE_MEMBERS`, `MUTE_MEMBERS`. Does not join voice.
-- Squad: alfa, bravo, charlie, …. Each holds `CONNECT`, `SPEAK`,
-  `PRIORITY_SPEAKER` on the voice channels it is provisioned into. None is a
-  controller.
+- **Main / controller**: registers `/star-bridge`, holds `MANAGE_CHANNELS`,
+  `MANAGE_ROLES`, `MOVE_MEMBERS`, `MUTE_MEMBERS`. Joins voice on **the
+  command net** (mode: `command`) or **head-ops net** (mode: `joint`)
+  when a session opens.
+- **Squad**: alfa, bravo, charlie. Each joins its assigned squad net for
+  the duration of the session. None is a controller.
 
-This is a cleaner separation of concerns and matches the user's Discord
-application layout (the step 1 spike bot becomes the controller). Anywhere the
-spec says "member Alfa is controller", read "the controller application is a
-separate bot". `bots.is_controller` in the §11 schema still applies to the
-controller row; alfa's row has `is_controller = 0`.
+Total applications in v1: **4** (main + 3 squad). This matches the step 1
+spike bot naturally becoming the main. Anywhere the spec's §2 text says
+"member Alfa is controller", read "the main application is controller and
+occupies the command net". `bots.is_controller = 1` for the main; squad
+rows have `is_controller = 0`.
+
+## Divergence from spec — per-session channel creation
+
+Superseding §4 of the spec draft ("hidden pool of N voice channels revealed
+by permission overwrites"): voice channels are **created per session** and
+deleted at teardown. Only the category and a single control text channel
+are created at `/star-bridge init` time. Rationale: the ~2 rename per 10 min
+PATCH limit only bit the pool design when it also renamed; per-session
+create/delete uses a different, looser bucket and gives a cleaner sidebar.
+The `channel_pool` table in §11 stays in the schema but is not populated
+in v1.
 
 ## Hard constraints — violating these breaks the product
 

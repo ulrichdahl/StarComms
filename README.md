@@ -13,14 +13,15 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 5a of 9** (spec §16): pool provisioning half of step 5. Steps 1–4 passed.
+**Step 5a of 9** (spec §16): init half of step 5. Steps 1–4 passed.
 
-Adds a fourth "controller" bot (see CLAUDE.md "Divergence from spec") that
-registers `/star-bridge` per guild. `/star-bridge init` provisions a
-category and one voice channel per squad member with the base permission
-overwrite set — @everyone denied `VIEW_CHANNEL`, each squad bot allowed on
-its own channel. Idempotent: re-running does nothing when the pool is
-intact, and repairs it when a channel has been deleted out from under it.
+Adds a fourth "main" application (see CLAUDE.md "Divergence from spec"):
+it runs `/star-bridge` slash commands AND will occupy the command net's
+voice channel when a session opens. `/star-bridge init` provisions a
+category (renamable by the guild) plus a single control text channel.
+**Voice channels are created per session** (step 5b) and deleted at
+teardown — the earlier "hidden pool of N voice channels" design in spec
+§4 is superseded (see §17 #4).
 
 The step 5a build does **not** yet include the session wizard, lead
 selection, teardown timer, or AFK move — those land in step 5b. The blind
@@ -109,19 +110,22 @@ fallback path.
 
 ## Running /star-bridge init (step 5a)
 
-Once the fleet is up, run `/star-bridge init` in the guild's text channel
-(a member with **Manage Guild** must issue it). Expected:
+Once the fleet is up, run `/star-bridge init` in any text channel of the
+guild (a member with **Manage Guild** must issue it). Expected:
 
-- A `Star Bridge` category appears.
-- Three voice channels: `Command Alfa`, `Command Bravo`, `Command Charlie`.
-- Each is hidden from `@everyone`.
-- The corresponding squad bot appears in its own channel; the controller
-  can see all three.
-- The ephemeral reply lists the created/reused channels.
+- A `Star Bridge` category appears (renamable by the guild).
+- One text channel `#star-bridge-ops` under it, hidden from `@everyone` —
+  the operations console where slash commands and mirror embeds land.
+- The ephemeral reply lists the created/reused ids.
 
-Re-running is idempotent — the second run reports every channel as
-"reused". Delete a channel manually and re-run to see the pool repair
-itself.
+Voice channels are **not** created at init time. They are created per
+session by `/star-bridge open` (step 5b) named for the mode
+(`Command`/`Alpha`/`Bravo`/`Charlie` in command mode) and deleted at
+teardown — see §17 #4 in the spec and the CLAUDE.md divergence note.
+
+Re-running init is idempotent — the second run reports the category and
+control channel as "reused". Delete either manually and re-run to see
+init recreate it.
 
 `/star-bridge status` reports the current fleet state.
 

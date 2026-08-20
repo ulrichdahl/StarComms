@@ -245,6 +245,19 @@
 
 <section id="s4">
   <h2><b>04</b> Channel provisioning</h2>
+  <div class="call">
+    <span class="lab">Superseded 20 Aug 2026 — see §17 #4 and CLAUDE.md</span>
+    <p>The "hidden pool of N voice channels revealed by overwrites" model
+      below is <strong>no longer the v1 design</strong>. v1 creates only a
+      category and a single <code>star-bridge-ops</code> control text channel
+      at <code>/star-bridge init</code>. Voice channels are created per
+      session in the mode's callsigns (Command / Alpha / Bravo / Charlie, or
+      Head&nbsp;Ops / Alpha&nbsp;Ops / …) and deleted at teardown. The
+      original rationale — avoiding Discord's ~2 rename per 10 min PATCH
+      limit — still stands (channels are never renamed by the bot), but
+      per-session create/delete uses a looser rate bucket and gives a cleaner
+      sidebar than a permanent, revealed-and-hidden pool.</p>
+  </div>
   <div class="call risk">
     <span class="lab">Rate limit that kills the naive design</span>
     <p>Channel <code>name</code>/<code>topic</code> PATCH is limited to <strong>~2 per 10 min per channel</strong> — long undocumented, <a href="https://github.com/discord/discord-api-docs/issues/1900">repeatedly reported</a>. Never rename a channel to repurpose it. Create/delete churn per session also burns route buckets for nothing.</p>
@@ -830,7 +843,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</code></pr
       <tr><td class="num">1</td><td><s><code>alert</code> vs <code>broadcast</code></s> — <strong>resolved</strong></td><td><code>alert</code>: <code>Horn</code> cue, preempts a held net. <code>broadcast</code>: <code>Attention</code> cue, skips held nets. Danish <code>Attention</code> localises to <em>Giv Agt</em>.</td><td>—</td></tr>
       <tr><td class="num">2</td><td><s>Callsign namespace flat per guild or per session</s> — <strong>resolved</strong></td><td>Flat per guild. v1 uses named callsigns rather than raw NATO letters. <br>• <strong>Command mode</strong> nets: <code>Command</code>, <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code>. <br>• <strong>Joint operations</strong> nets: <code>Head Ops</code>, <code>Alpha Ops</code>, <code>Bravo Ops</code>, <code>Charlie Ops</code>.</td><td>§3</td></tr>
       <tr><td class="num">3</td><td><s>Who may trigger a relay</s> — <strong>resolved</strong></td><td>Session owner appoints a lead in every net. The lead in the owner's <em>command</em> net is the <strong>XO</strong> and holds the same speaking rights as the owner — both can hail, command, alert, broadcast. Squad leads may only reply to the command net (see #13).</td><td>§5, §8</td></tr>
-      <tr><td class="num">4</td><td><s>Fleet size at launch</s> — <strong>resolved</strong></td><td>v1 ships <strong>4 applications</strong>: one main (controller, also the command-net voice presence) plus <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code>. Fleet expansion is <a href="#s18">future work</a>.</td><td>§2</td></tr>
+      <tr><td class="num">4</td><td><s>Fleet size at launch</s> — <strong>resolved</strong></td><td>v1 ships <strong>4 applications</strong>: one <strong>main</strong> that both runs the controller (slash commands, channel management) <em>and</em> occupies the command-net voice channel — double duty — plus <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code> for the squad nets. Fleet expansion is <a href="#s18">future work</a>.</td><td>§2</td></tr>
       <tr><td class="num">5</td><td><s>da or en procedure words on your nets</s> — <strong>resolved</strong></td><td>Per-guild locale, one setting. Both en and da packs shipped. <a href="#s18">Per-guild cue override</a> is future work.</td><td>§10</td></tr>
       <tr><td class="num">6</td><td><s>Self-hosted or streaming cloud STT</s> — <strong>resolved</strong></td><td>Local TTS <em>and</em> STT. No cloud dependency in v1.</td><td>§10</td></tr>
       <tr><td class="num">7</td><td><s><strong>Do squad nets answer by voice?</strong></s> — <strong>resolved</strong></td><td>Yes, but only the lead, and only button-gated. No detection on squad nets, so recognition cost does not scale with total nets.</td><td>—</td></tr>
@@ -871,6 +884,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</code></pr
         <td><strong>Explicit reply cut-off</strong></td>
         <td>#14 v1 answer is "no explicit cut-off, silence timeout is the natural end." A future commander who wants a hard stop button will need one.</td>
         <td><strong>Preempt</strong> button on the mirror embed for the owner and XO; presses close the reply with <code>Out</code> cue and posts a "cut off by &lt;name&gt;" note. Reuses the alert-preempt path (§5).</td>
+      </tr>
+      <tr>
+        <td><strong>Transfer ownership</strong></td>
+        <td>Session owner may need to hand off mid-session — comms failure, shift change, or delegation.</td>
+        <td>Button in the command-channel mirror embed that only the current owner can press. Opens a member picker; confirmed target must be present in the command net. Recorded to <code>audit</code>; new owner's name announced in-net.</td>
       </tr>
     </tbody>
   </table></div>
