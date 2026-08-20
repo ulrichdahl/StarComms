@@ -2,6 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# scratch / spec-sync intermediates
+temp/
+
 # secrets
 .env
 .env.*

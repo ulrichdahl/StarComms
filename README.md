@@ -13,7 +13,19 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 4 of 9** (spec §16): the cue engine. Steps 1–3 passed.
+**Step 5a of 9** (spec §16): pool provisioning half of step 5. Steps 1–4 passed.
+
+Adds a fourth "controller" bot (see CLAUDE.md "Divergence from spec") that
+registers `/star-bridge` per guild. `/star-bridge init` provisions a
+category and one voice channel per squad member with the base permission
+overwrite set — @everyone denied `VIEW_CHANNEL`, each squad bot allowed on
+its own channel. Idempotent: re-running does nothing when the pool is
+intact, and repairs it when a channel has been deleted out from under it.
+
+The step 5a build does **not** yet include the session wizard, lead
+selection, teardown timer, or AFK move — those land in step 5b. The blind
+relay from step 3 still runs hardcoded bravo → charlie; step 6 replaces
+the hardcoded pair with session-driven routing.
 
 The step 4 build loads six cue assets (`ready`, `attention`, `horn`,
 `negative`, `busy`, `out`) at startup, decodes them via ffmpeg, re-encodes
@@ -37,25 +49,28 @@ arrive with step 6.
 Earlier steps are retained: `src/spike/receive.ts` still runs via
 `npm run spike` for DAVE-receive regression diagnosis.
 
-## Running the fleet (step 2)
+## Running the fleet (steps 2 + 5a)
 
-### 1. Register N applications
+### 1. Register 4 applications (1 controller + 3 squad)
 
-Build against N=3 (`alfa`, `bravo`, `charlie`) per spec §2 risk box.
+The step-1 spike bot naturally becomes the controller. Squad build target
+is N=3 (`alfa`, `bravo`, `charlie`) per spec §2 risk box.
 
 For each application, in the [developer portal](https://discord.com/developers/applications):
 
 - **Bot → Privileged Gateway Intents:** enable **Server Members Intent**.
-  Miss this on any one member and its login fails with `DisallowedIntents`.
+  Miss this on any one bot and its login fails with `DisallowedIntents`.
 - **Bot → Token:** generate and copy — shown once.
 - **Bot → Public Bot:** off is fine for testing.
-- Invite each to the same guild with scope `bot` and the base permissions:
-
-```
-https://discord.com/oauth2/authorize?client_id=1540029211778220032&scope=bot&permissions=1049600
-https://discord.com/oauth2/authorize?client_id=1540029657183682632&scope=bot&permissions=1049600
-https://discord.com/oauth2/authorize?client_id=1540029933747830844&scope=bot&permissions=1049600
-```
+- Invite each to the same guild:
+  - **Controller** (needs `applications.commands` for slash commands + admin permissions):
+    ```
+    https://discord.com/oauth2/authorize?client_id=<CONTROLLER_APP_ID>&scope=bot%20applications.commands&permissions=402926608
+    ```
+  - **Squad** (base voice permissions — grant `Speak` per-channel as needed):
+    ```
+    https://discord.com/oauth2/authorize?client_id=<SQUAD_APP_ID>&scope=bot&permissions=1049600
+    ```
 
 ### 2. Configure
 
@@ -77,8 +92,8 @@ npm run dev                               # or: docker compose up --build
 curl -s localhost:3000/healthz | jq
 ```
 
-Expected: `"verdict": "ok"`, three members with `loggedIn: true`, `status:
-"Ready"`, one `controller: true` (alfa). To exercise resume, bounce a bot's
+Expected: `"verdict": "ok"`, four members with `loggedIn: true`, `status:
+"Ready"`, one with `role: "controller"` and three squad. To exercise resume, bounce a bot's
 gateway. Inside the container's namespace works even when your host firewall
 does not:
 
@@ -91,6 +106,24 @@ docker network connect starbridge_default starbridge-bot-1
 The log line to look for is `[<nato>] resumed session (no rejoin, no
 chime)`. A fresh identify after an expired session is the acceptable
 fallback path.
+
+## Running /star-bridge init (step 5a)
+
+Once the fleet is up, run `/star-bridge init` in the guild's text channel
+(a member with **Manage Guild** must issue it). Expected:
+
+- A `Star Bridge` category appears.
+- Three voice channels: `Command Alfa`, `Command Bravo`, `Command Charlie`.
+- Each is hidden from `@everyone`.
+- The corresponding squad bot appears in its own channel; the controller
+  can see all three.
+- The ephemeral reply lists the created/reused channels.
+
+Re-running is idempotent — the second run reports every channel as
+"reused". Delete a channel manually and re-run to see the pool repair
+itself.
+
+`/star-bridge status` reports the current fleet state.
 
 ## Running the blind relay (step 3)
 
@@ -285,6 +318,9 @@ src/fleet/status.ts       /healthz JSON: per-member verdict
 src/relay/blind.ts        step 3+4: audio bridge + cue playback
 src/relay/metrics.ts      relay stats + §5 fleet suppression check
 src/lib/cues.ts           step 4: cue loader, equal-duration validation
+src/commands/registrar.ts step 5a: /star-bridge slash-command dispatcher
+src/commands/star-bridge.ts   /star-bridge command tree
+src/pool/provisioning.ts  step 5a: channel-pool creation + repair
 scripts/gen-cues.sh       placeholder cue generator (sine waves via ffmpeg)
 src/lib/config.ts         fleet.yaml + token env resolution
 src/lib/db.ts             SQLite, WAL, full §11 schema
@@ -323,7 +359,8 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 
 ## Next
 
-Step 5: pool + sessions. Permission-overwrite channel provisioning, the
-`/star-bridge` wizard, lead selection, session teardown timer, AFK move
-for stragglers. First step where alfa exercises its controller role and
-the channel_pool table earns its keep.
+Step 5b: the session wizard. `/star-bridge open` modal, lead selection,
+target callsigns, session row, teardown timer, MOVE_MEMBERS the lead into
+the command net, AFK-move for stragglers at close. The blind relay's
+hardcoded bravo→charlie routing will be replaced by session-driven wiring
+in step 6.
