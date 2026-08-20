@@ -125,20 +125,33 @@ export async function openSession(args: {
     insertNet.run(sessionId, n.callsign.toLowerCase().replace(/\s+/g, '-'), n.channelId, n.botKey, n.role as NetRole);
   }
 
-  // Join each assigned bot into its channel. Failures here do not roll back
-  // — a squad bot that failed to join will show up in /healthz and can be
-  // repaired by /star-bridge close and re-open. Fail-hard was worse: it
-  // left the operator with channels they could see but no bot presence, and
-  // no way to close cleanly.
+  // Join each assigned bot into its channel. Adapter routing is subtle in
+  // a multi-Client setup: the adapter binds to a specific Client's gateway
+  // and only observes VOICE_SERVER_UPDATE + VOICE_STATE_UPDATE on that
+  // Client's shard. If we passed the controller's adapter for alfa, alfa's
+  // gateway events would never reach the connection and entersState would
+  // fail with "The operation was aborted." Use the joining bot's own guild
+  // view. See CLAUDE.md constraint on adapterCreator.
+  //
+  // Failures here do not roll back — a squad bot that failed to join will
+  // show up in /healthz and can be repaired by /star-bridge close and
+  // re-open. Fail-hard was worse: it left the operator with channels they
+  // could see but no bot presence, and no way to close cleanly.
   for (const net of nets) {
     const client = clientForBotKey(fleet, net.botKey);
     const channel = created.find((c) => c.id === net.channelId);
     if (channel === undefined) continue;
+    const botGuild = client.guilds.cache.get(guild.id)
+      ?? await client.guilds.fetch(guild.id).catch(() => null);
+    if (botGuild === null || botGuild === undefined) {
+      console.error(`session ${sessionId}: ${net.botKey} is not in guild ${guild.id}, cannot join ${net.callsign}`);
+      continue;
+    }
     try {
       const conn = joinVoiceChannel({
         channelId: channel.id,
         guildId: guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
+        adapterCreator: botGuild.voiceAdapterCreator,
         selfDeaf: selfDeafFor(net.role),
         selfMute: false,           // never selfMute — must be able to play cues
         group: requireUserId(client, net.botKey),

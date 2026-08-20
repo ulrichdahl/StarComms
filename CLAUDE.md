@@ -63,6 +63,15 @@ in v1.
   the second bot never actually joins. This bit us in step 3 — bravo appeared
   in the target channel and charlie never connected, with both `entersState`
   calls resolving Ready against the same shared connection.
+- **`adapterCreator` must be built from the joining bot's own `Guild` object.**
+  `guild.voiceAdapterCreator` binds to the WebSocket of whichever Client cached
+  that Guild. If we take the guild from the interaction (controller's Client)
+  and pass its adapter to alfa's join, alfa's gateway `VOICE_STATE_UPDATE`
+  reaches alfa's WebSocket but nothing is listening — the connection times out
+  with "The operation was aborted". Always resolve the joining bot's own guild
+  view (`client.guilds.cache.get(guildId)`, fetch if empty) and use *that*
+  adapter. This bit us in step 5b for main + alfa — the two bots that were not
+  already voice-connected from earlier steps.
 
 ## Build order
 

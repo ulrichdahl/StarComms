@@ -64,9 +64,13 @@ For each application, in the [developer portal](https://discord.com/developers/a
 - **Bot → Token:** generate and copy — shown once.
 - **Bot → Public Bot:** off is fine for testing.
 - Invite each to the same guild:
-  - **Controller** (needs `applications.commands` for slash commands + admin permissions):
+  - **Controller** (double-duty: slash commands + joins voice as the primary net + moves the owner in). For a testing setup, the easy option is Administrator:
     ```
-    https://discord.com/oauth2/authorize?client_id=<CONTROLLER_APP_ID>&scope=bot%20applications.commands&permissions=402926608
+    https://discord.com/oauth2/authorize?client_id=<CONTROLLER_APP_ID>&scope=bot%20applications.commands&permissions=8
+    ```
+    For a narrower production set (View + Manage Channels + Manage Roles + Connect + Speak + Priority Speaker + Move/Mute/Deafen Members + Send Messages + Embed Links + Read History + Add Reactions):
+    ```
+    https://discord.com/oauth2/authorize?client_id=<CONTROLLER_APP_ID>&scope=bot%20applications.commands&permissions=301026640
     ```
   - **Squad** (voice: View + Connect + Speak + Priority Speaker at the guild level, so pool channels inherit them without the controller having to grant them in overwrites):
     ```
