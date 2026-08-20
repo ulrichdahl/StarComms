@@ -163,6 +163,7 @@
     <a href="#s15"><b>15</b><span>Risks</span></a>
     <a href="#s16"><b>16</b><span>Build order</span></a>
     <a href="#s17"><b>17</b><span>Open questions</span></a>
+    <a href="#s18"><b>18</b><span>Future work</span></a>
   </nav>
 </header>
 
@@ -822,26 +823,57 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</code></pr
 
 <section id="s17">
   <h2><b>17</b> Open questions</h2>
+  <p>All 14 questions resolved 20 Aug 2026. The v1 answers below are the source of truth; the affected sections will be rewritten in the next artifact revision to fold these in.</p>
   <div class="tw"><table>
-    <thead><tr><th>#</th><th>Question</th><th>Assumed</th><th>Blocks</th></tr></thead>
+    <thead><tr><th>#</th><th>Question</th><th>v1 answer</th><th>Blocks</th></tr></thead>
     <tbody>
-      <tr><td class="num">1</td><td><s><code>alert</code> vs <code>broadcast</code></s> — <strong>resolved</strong></td><td><code>alert</code>: <code>Horn</code> cue, preempts a held net. <code>broadcast</code>: <code>Attention</code> cue, skips held nets</td><td>—</td></tr>
-      <tr><td class="num">2</td><td>Callsign namespace flat per guild or per session</td><td>flat per guild</td><td>§3</td></tr>
-      <tr><td class="num">3</td><td>Who may trigger a relay</td><td>lead + optional role</td><td>§5</td></tr>
-      <tr><td class="num">4</td><td>Fleet size at launch</td><td>build 3, ship 12</td><td>§2</td></tr>
-      <tr><td class="num">5</td><td>da or en procedure words on your nets</td><td>per-guild locale pack, both shipped</td><td>§10</td></tr>
-      <tr><td class="num">6</td><td>Self-hosted or streaming cloud STT</td><td>local default — streaming no longer needed (§6)</td><td>§10</td></tr>
-      <tr><td class="num">8</td><td>D<sub>c</sub> cue length</td><td>1200 ms; tune against a real net once cues are recorded</td><td>§5</td></tr>
-      <tr><td class="num">9</td><td>Cue voices: shipped TTS (Piper da/en) or your own recordings</td><td>ship TTS defaults, operator WAVs override per guild</td><td>§5</td></tr>
-      <tr><td class="num">10</td><td><code>Out</code> close cue — wanted, or silence?</td><td>enabled by default, per-guild toggle</td><td>§5</td></tr>
-      <tr><td class="num">11</td><td><s>What powers should a squad lead carry?</s> — <strong>resolved</strong></td><td>The reply channel: only the lead answers the commander. Everyone else gets Acknowledge, and the lead's ack is the authoritative one</td><td>—</td></tr>
-      <tr><td class="num">12</td><td>Is the member's name <em>in the audio</em> worth adding a TTS runtime? A fixed <code>lead_assigned</code> cue needs none</td><td>yes — TTS added for announcements only</td><td>§5, §10</td></tr>
-      <tr><td class="num">13</td><td>Should a lead's reply be relayed to the other squads, or only to the commander?</td><td>commander only — squad nets stay isolated from each other</td><td>§5</td></tr>
-      <tr><td class="num">14</td><td>May the commander revoke a reply mid-transmission (cut a rambling lead off)?</td><td>not in v1; <code>max_hold_ms</code> is the only cap</td><td>§5, §8</td></tr>
-      <tr><td class="num">7</td><td><s><strong>Do squad nets answer by voice?</strong></s> — <strong>resolved</strong></td><td>Yes, but only the lead, and only button-gated. No detection on squad nets, so recognition cost does not scale with total nets</td><td>—</td></tr>
+      <tr><td class="num">1</td><td><s><code>alert</code> vs <code>broadcast</code></s> — <strong>resolved</strong></td><td><code>alert</code>: <code>Horn</code> cue, preempts a held net. <code>broadcast</code>: <code>Attention</code> cue, skips held nets. Danish <code>Attention</code> localises to <em>Giv Agt</em>.</td><td>—</td></tr>
+      <tr><td class="num">2</td><td><s>Callsign namespace flat per guild or per session</s> — <strong>resolved</strong></td><td>Flat per guild. v1 uses named callsigns rather than raw NATO letters. <br>• <strong>Command mode</strong> nets: <code>Command</code>, <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code>. <br>• <strong>Joint operations</strong> nets: <code>Head Ops</code>, <code>Alpha Ops</code>, <code>Bravo Ops</code>, <code>Charlie Ops</code>.</td><td>§3</td></tr>
+      <tr><td class="num">3</td><td><s>Who may trigger a relay</s> — <strong>resolved</strong></td><td>Session owner appoints a lead in every net. The lead in the owner's <em>command</em> net is the <strong>XO</strong> and holds the same speaking rights as the owner — both can hail, command, alert, broadcast. Squad leads may only reply to the command net (see #13).</td><td>§5, §8</td></tr>
+      <tr><td class="num">4</td><td><s>Fleet size at launch</s> — <strong>resolved</strong></td><td>v1 ships <strong>4 applications</strong>: one main (controller, also the command-net voice presence) plus <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code>. Fleet expansion is <a href="#s18">future work</a>.</td><td>§2</td></tr>
+      <tr><td class="num">5</td><td><s>da or en procedure words on your nets</s> — <strong>resolved</strong></td><td>Per-guild locale, one setting. Both en and da packs shipped. <a href="#s18">Per-guild cue override</a> is future work.</td><td>§10</td></tr>
+      <tr><td class="num">6</td><td><s>Self-hosted or streaming cloud STT</s> — <strong>resolved</strong></td><td>Local TTS <em>and</em> STT. No cloud dependency in v1.</td><td>§10</td></tr>
+      <tr><td class="num">7</td><td><s><strong>Do squad nets answer by voice?</strong></s> — <strong>resolved</strong></td><td>Yes, but only the lead, and only button-gated. No detection on squad nets, so recognition cost does not scale with total nets.</td><td>—</td></tr>
+      <tr><td class="num">8</td><td><s>D<sub>c</sub> cue length</s> — <strong>resolved</strong></td><td>1200 ms; tune against a real net once real cues are recorded.</td><td>§5</td></tr>
+      <tr><td class="num">9</td><td><s>Cue voices: shipped TTS (Piper da/en) or your own recordings</s> — <strong>resolved</strong></td><td>Ship TTS defaults. Operators drop replacement files at the same paths to override. <a href="#s18">Per-guild cue upload UI</a> is future work.</td><td>§5</td></tr>
+      <tr><td class="num">10</td><td><s><code>Out</code> close cue — wanted, or silence?</s> — <strong>resolved</strong></td><td>Two-part close: caller may say <strong>"Over"</strong> (Danish <em>"Slut"</em>) as a spoken terminator, and net close plays a short <strong>squelch / scratch</strong> SFX (locale-neutral) in both source and target. Replaces the silent close of earlier drafts. Per-guild toggle retained.</td><td>§5</td></tr>
+      <tr><td class="num">11</td><td><s>What powers should a squad lead carry?</s> — <strong>resolved</strong></td><td>The reply channel: only the lead answers the commander. Everyone else gets Acknowledge, and the lead's ack is the authoritative one.</td><td>—</td></tr>
+      <tr><td class="num">12</td><td><s>Is the member's name <em>in the audio</em> worth adding a TTS runtime?</s> — <strong>resolved</strong></td><td>Yes, in the guild's locale. TTS renders member display names for lead-assigned announcements. <a href="#s18">Per-user recorded callsign</a> is future work.</td><td>§5, §10</td></tr>
+      <tr><td class="num">13</td><td><s>Should a lead's reply be relayed to the other squads, or only to the commander?</s> — <strong>resolved</strong></td><td>Commander only — squad nets stay isolated from each other. XO (the command-net lead) carries the same rights as the owner.</td><td>§5</td></tr>
+      <tr><td class="num">14</td><td><s>May the commander revoke a reply mid-transmission?</s> — <strong>resolved</strong></td><td>Terminator behaviour ends the reply naturally. <strong>"Over"</strong> followed by a short pause closes the net; a longer silence (<code>silence_close_ms</code>) closes it without a terminator. <code>max_hold_ms</code> still caps runaway holds. Explicit cut-off is <a href="#s18">future work</a>.</td><td>§5, §8</td></tr>
     </tbody>
   </table></div>
   <p>#7 was the architectural fork and it resolved cheaply. Squad nets do answer by voice, but because the reply is button-gated rather than spoken, squad bots only ever <em>receive</em> — they never <em>detect</em>. STT stays proportional to command nets. The cost the question warned about does not materialise.</p>
+</section>
+
+<section id="s18">
+  <h2><b>18</b> Future work</h2>
+  <p>Deferred from the 20 Aug 2026 resolutions. Not blocking v1 and not on the §16 build order. Recorded here so a future me does not have to re-derive them from chat.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Idea</th><th>Motivation</th><th>Shape sketch</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Fleet expansion beyond 4</strong></td>
+        <td>v1 ships main + Alpha/Bravo/Charlie. Larger operations want more squads or nested command nets.</td>
+        <td>Add a fifth callsign pack. Naming stays letter-based in command mode; joint-ops mode extends the <code>-Ops</code> suffix. Fleet-size lift in §2 requires per-guild admin controls (guild owner cannot register apps).</td>
+      </tr>
+      <tr>
+        <td><strong>Per-guild cue overrides</strong></td>
+        <td>Operators want to sound different from the default TTS voices. Currently they can only replace files on disk in the container.</td>
+        <td>Slash-command upload flow: <code>/star-bridge cue set attention &lt;wav&gt;</code>. Server validates duration matches D<sub>c</sub>, stores to <code>data/cues/&lt;guild_id&gt;/</code>, adds a <code>cue_assets</code> row. Fails loud on duration mismatch — same rule as boot-time validation (§5).</td>
+      </tr>
+      <tr>
+        <td><strong>Per-user recorded callsign</strong></td>
+        <td>TTS name pronunciation is variable, especially for Danish names in the en pack. A member should be able to record their own name.</td>
+        <td>Slash command <code>/star-bridge callsign record</code> opens a two-way voice interaction: the bot listens for one short utterance, encodes it to Opus, stores it against the (guild, user) pair. The announcement path prefers the recorded audio, falls back to TTS.</td>
+      </tr>
+      <tr>
+        <td><strong>Explicit reply cut-off</strong></td>
+        <td>#14 v1 answer is "no explicit cut-off, silence timeout is the natural end." A future commander who wants a hard stop button will need one.</td>
+        <td><strong>Preempt</strong> button on the mirror embed for the owner and XO; presses close the reply with <code>Out</code> cue and posts a "cut off by &lt;name&gt;" note. Reuses the alert-preempt path (§5).</td>
+      </tr>
+    </tbody>
+  </table></div>
 </section>
 
 <hr class="rule-end">
