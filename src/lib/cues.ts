@@ -15,9 +15,9 @@
  * used by the blind relay, so the same audio-out path handles both.
  */
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import prism from 'prism-media';
 import {
@@ -165,8 +165,22 @@ export function createCueResource(cue: LoadedCue): AudioResource {
  * Extract the cue paths for a locale from the parsed fleet.yaml. Not
  * folded into the config parser because the shape is loose and we want
  * cue loading to fail with its own error class, not ConfigError.
+ *
+ * Path resolution:
+ *   1. Absolute paths are used as-is.
+ *   2. Relative paths resolve against the yaml file's directory. This is
+ *      the natural ops layout: `fleet.yaml` and `cues/` sit in the same
+ *      config tree, so `cues/en/ready.wav` in the yaml means "next to me".
+ *   3. If yaml-relative does not exist on disk, fall back to cwd-relative.
+ *      This lets `npm run dev` from the repo root work with the shipped
+ *      `fleet.example.yaml`, whose paths read like repo-rooted strings.
  */
-export function resolveCuePaths(rawConfig: unknown, cueSet: string, locale: string): CuePaths {
+export function resolveCuePaths(
+  rawConfig: unknown,
+  cueSet: string,
+  locale: string,
+  configPath: string,
+): CuePaths {
   const raw = rawConfig as Record<string, unknown>;
   const sets = raw['cue_sets'] as Record<string, unknown> | undefined;
   if (sets === undefined) throw new CueLoadError('fleet.yaml has no cue_sets');
@@ -176,6 +190,15 @@ export function resolveCuePaths(rawConfig: unknown, cueSet: string, locale: stri
   const shared = set['shared'] as Record<string, string> | undefined;
   if (localized === undefined) throw new CueLoadError(`cue_sets.${cueSet}.${locale} missing`);
 
+  const configDir = dirname(resolve(configPath));
+
+  const resolveOne = (raw: string): string => {
+    if (isAbsolute(raw)) return raw;
+    const yamlRelative = resolve(configDir, raw);
+    if (existsSync(yamlRelative)) return yamlRelative;
+    return resolve(process.cwd(), raw);
+  };
+
   const paths: Partial<CuePaths> = {};
   const localizedNames: readonly Cue[] = ['ready', 'attention', 'negative', 'busy'];
   const sharedNames: readonly Cue[] = ['horn', 'out'];
@@ -183,12 +206,12 @@ export function resolveCuePaths(rawConfig: unknown, cueSet: string, locale: stri
   for (const n of localizedNames) {
     const v = localized[n];
     if (typeof v !== 'string') throw new CueLoadError(`cue_sets.${cueSet}.${locale}.${n} must be a string path`);
-    paths[n] = v;
+    paths[n] = resolveOne(v);
   }
   for (const n of sharedNames) {
     const v = shared?.[n];
     if (typeof v !== 'string') throw new CueLoadError(`cue_sets.${cueSet}.shared.${n} must be a string path`);
-    paths[n] = v;
+    paths[n] = resolveOne(v);
   }
   return paths as CuePaths;
 }

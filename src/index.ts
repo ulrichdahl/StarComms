@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   // without cues — but /trigger will 503.
   let cues: CueSet | null = null;
   try {
-    const paths = resolveCuePaths(config.raw, config.defaults.cueSet, config.defaults.locale);
+    const paths = resolveCuePaths(config.raw, config.defaults.cueSet, config.defaults.locale, configPath);
     cues = await loadCueSet(paths, config.defaults.cueDurationMs);
     console.log(`cues: loaded ${cues.summary().length} at ~${config.defaults.cueDurationMs} ms each`);
     for (const c of cues.summary()) {

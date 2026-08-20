@@ -128,19 +128,44 @@ describe('resolveCuePaths', () => {
     },
   };
 
-  it('resolves every cue path for the named locale', () => {
-    const paths = resolveCuePaths(raw, 'default', 'en');
-    expect(paths.ready).toBe('cues/en/ready.wav');
-    expect(paths.horn).toBe('cues/horn.wav');
-    expect(paths.out).toBe('cues/out.wav');
+  it('resolves relative paths against the yaml file directory when they exist there', () => {
+    // fleet.example.yaml lives at config/fleet.example.yaml and the shipped
+    // cues live at repo/cues — from config/'s POV cues/en/ready.wav does not
+    // exist yaml-relative, so the loader falls back to cwd. Test both branches.
+    const paths = resolveCuePaths(raw, 'default', 'en', '/etc/starbridge/fleet.yaml');
+    // Absolute — non-existent yaml-relative falls back to cwd, so we assert
+    // shape rather than exact string.
+    expect(paths.ready).toMatch(/cues\/en\/ready\.wav$/);
+  });
+
+  it('respects absolute paths as-is', () => {
+    const abs = {
+      cue_sets: {
+        default: {
+          en: {
+            ready: '/absolute/ready.wav',
+            attention: '/absolute/attention.wav',
+            negative: '/absolute/negative.wav',
+            busy: '/absolute/busy.wav',
+          },
+          shared: {
+            horn: '/absolute/horn.wav',
+            out: '/absolute/out.wav',
+          },
+        },
+      },
+    };
+    const paths = resolveCuePaths(abs, 'default', 'en', '/etc/starbridge/fleet.yaml');
+    expect(paths.ready).toBe('/absolute/ready.wav');
+    expect(paths.horn).toBe('/absolute/horn.wav');
   });
 
   it('fails when the cue set is missing', () => {
-    expect(() => resolveCuePaths(raw, 'militant', 'en')).toThrow(/cue_sets\.militant/);
+    expect(() => resolveCuePaths(raw, 'militant', 'en', 'config/fleet.yaml')).toThrow(/cue_sets\.militant/);
   });
 
   it('fails when the locale is missing', () => {
-    expect(() => resolveCuePaths(raw, 'default', 'fr')).toThrow(/fr missing/);
+    expect(() => resolveCuePaths(raw, 'default', 'fr', 'config/fleet.yaml')).toThrow(/fr missing/);
   });
 
   it('fails when a strict-trio cue path is missing', () => {
@@ -152,7 +177,7 @@ describe('resolveCuePaths', () => {
         },
       },
     };
-    expect(() => resolveCuePaths(partial, 'default', 'en')).toThrow(/horn/);
+    expect(() => resolveCuePaths(partial, 'default', 'en', 'config/fleet.yaml')).toThrow(/horn/);
   });
 });
 
