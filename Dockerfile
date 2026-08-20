@@ -29,13 +29,13 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 USER node
 EXPOSE 3000
-CMD ["node", "dist/spike/receive.js"]
+CMD ["node", "dist/index.js"]
 
 # Dev target: full toolchain, sources mounted by the compose override.
-# Exec tsx directly (not `npm run`) so SIGTERM reaches the Node process and its
-# shutdown handler prints the verdict on `docker compose down`.
+# Exec tsx directly (not `npm run`) so SIGTERM reaches the Node process and
+# its shutdown handler runs cleanly on `docker compose down`.
 FROM deps AS dev
 ENV NODE_ENV=development
 COPY tsconfig.json ./
 EXPOSE 3000
-CMD ["./node_modules/.bin/tsx", "src/spike/receive.ts"]
+CMD ["./node_modules/.bin/tsx", "src/index.ts"]

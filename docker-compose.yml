@@ -13,6 +13,8 @@ services:
     environment:
       DB_PATH: /data/starbridge.db
       CONFIG_PATH: /etc/starbridge/fleet.yaml
+      STATUS_PORT: "3000"
+      # Preserved for step 1 spike diagnostics.
       SPIKE_PORT: "3000"
     volumes:
       # Persistence, host-mounted. Must be writable by uid 1000 (the node user).
