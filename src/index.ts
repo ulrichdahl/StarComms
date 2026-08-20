@@ -109,7 +109,7 @@ async function main(): Promise<void> {
       }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const mode = interaction.options.getString('mode', true) as SessionMode;
-      const squads = interaction.options.getInteger('squads') ?? 3;
+      const squads = interaction.options.getInteger('squads', true);
       try {
         const result = await openSession({
           guild, ownerId: interaction.user.id, mode, squads, fleet, db,
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
           (n) => `• ${n.callsign} — <#${n.channelId}> (bot: ${n.botKey})`,
         );
         const body = [
-          `**Session ${result.sessionId} open** — mode ${result.mode}, ${result.nets.length} net(s)`,
+          `**Session ${result.sessionId} open** — mode \`${result.mode}\`, primary + ${squads} squad(s), ${result.nets.length} net(s) total`,
           ...netLines,
           '',
           `You have been moved into ${result.nets[0]?.callsign ?? 'the primary net'}. Use \`/star-bridge close\` to end the session.`,

@@ -54,9 +54,9 @@ export function starBridgeCommand(): RESTPostAPIChatInputApplicationCommandsJSON
           },
           {
             name: 'squads',
-            description: 'Number of squad/ops nets alongside the primary (1–3). Default 3.',
+            description: 'Number of squad/ops nets alongside the primary (1–3). Required, no default.',
             type: ApplicationCommandOptionType.Integer,
-            required: false,
+            required: true,
             min_value: 1,
             max_value: 3,
           },
