@@ -11,8 +11,8 @@ function fakeFleet(bots: BotState[]): Fleet {
 function bot(nato: string, o: Partial<BotState> = {}): BotState {
   return {
     nato,
+    role: nato === 'controller' ? 'controller' : 'squad',
     applicationId: '1'.repeat(18),
-    controller: false,
     loggedIn: true,
     status: 'Ready',
     tag: `${nato}#0001`,

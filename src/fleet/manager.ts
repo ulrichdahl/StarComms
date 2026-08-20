@@ -1,11 +1,12 @@
 /**
- * Fleet manager — spec §16.2.
+ * Fleet manager — spec §16.2 with the 4-bot divergence from CLAUDE.md.
  *
- * One process, one discord.js Client per fleet member, all logged in with the
- * privileged GUILD_MEMBERS intent. §12 explains why: without it a member can
- * connect but cannot resolve net membership. If the intent toggle in the
- * developer portal is off, login itself fails with DisallowedIntents — so
- * successful login is the assertion (§12 risk box).
+ * One process, one discord.js Client per squad member, and one additional
+ * client for the controller application. All logged in with GUILDS +
+ * GUILD_VOICE_STATES + GUILD_MEMBERS. §12 explains why the privileged
+ * intent is needed: without it a client cannot resolve net membership. If
+ * the developer-portal toggle is off, login fails with DisallowedIntents,
+ * so successful login is the assertion (§12 risk box).
  *
  * Connection hygiene per §6:
  *
@@ -14,18 +15,19 @@
  *     this automatically as long as we do NOT call `client.destroy()` on a
  *     transient disconnect. We destroy only on process shutdown.
  *
- * The manager surfaces per-bot state so the /healthz endpoint can prove the
- * fleet is up without joining any voice channel — voice joining is step 3's
- * job (spec §16.3).
+ * The manager surfaces per-bot state so /healthz can prove the fleet is up
+ * without joining any voice channel — voice joining is the relay's job
+ * (spec §16.3) and provisioning is the controller's (spec §16.5).
  */
 
 import { Client, Events, GatewayIntentBits, Status } from 'discord.js';
-import type { FleetMember } from '../lib/config.js';
+import type { ControllerConfig, FleetMember } from '../lib/config.js';
 
 export interface BotState {
+  /** 'controller' for the standalone command bot; nato name for squad. */
   nato: string;
+  role: 'controller' | 'squad';
   applicationId: string;
-  controller: boolean;
   loggedIn: boolean;
   /** discord.js Client status: READY, IDLE, CONNECTING, RECONNECTING, ... */
   status: string;
@@ -44,7 +46,10 @@ export interface BotState {
 }
 
 interface BotEntry {
-  member: FleetMember;
+  nato: string;
+  role: 'controller' | 'squad';
+  applicationId: string;
+  token: string;
   client: Client;
   state: BotState;
 }
@@ -60,19 +65,31 @@ function statusName(s: number): string {
 }
 
 export class Fleet {
-  private readonly bots: BotEntry[];
+  private readonly controller: BotEntry;
+  private readonly squad: BotEntry[];
   private shuttingDown = false;
 
-  constructor(members: FleetMember[]) {
-    this.bots = members.map((m) => this.makeEntry(m));
+  constructor(controller: ControllerConfig, members: FleetMember[]) {
+    this.controller = this.makeEntry({
+      nato: 'controller',
+      role: 'controller',
+      applicationId: controller.applicationId,
+      token: controller.token,
+    });
+    this.squad = members.map((m) => this.makeEntry({
+      nato: m.nato,
+      role: 'squad',
+      applicationId: m.applicationId,
+      token: m.token,
+    }));
   }
 
-  private makeEntry(member: FleetMember): BotEntry {
+  private makeEntry(spec: { nato: string; role: 'controller' | 'squad'; applicationId: string; token: string }): BotEntry {
     const client = new Client({ intents: [...INTENTS] });
     const state: BotState = {
-      nato: member.nato,
-      applicationId: member.applicationId,
-      controller: member.controller,
+      nato: spec.nato,
+      role: spec.role,
+      applicationId: spec.applicationId,
       loggedIn: false,
       status: 'INIT',
       tag: null,
@@ -84,7 +101,7 @@ export class Fleet {
       lastEventAt: null,
       lastEvent: null,
     };
-    const entry: BotEntry = { member, client, state };
+    const entry: BotEntry = { ...spec, client, state };
     this.wire(entry);
     return entry;
   }
@@ -96,8 +113,8 @@ export class Fleet {
   }
 
   private wire(entry: BotEntry): void {
-    const { client, member, state } = entry;
-    const tag = `[${member.nato}]`;
+    const { client, state } = entry;
+    const tag = `[${entry.nato}]`;
 
     client.on(Events.ClientReady, (c) => {
       state.loggedIn = true;
@@ -148,54 +165,62 @@ export class Fleet {
     });
   }
 
+  private allEntries(): BotEntry[] { return [this.controller, ...this.squad]; }
+
   /**
-   * Log every bot in and resolve when they have all fired ClientReady.
-   * A single failed login (bad token, disallowed intents) aborts start-up —
-   * a fleet missing a callsign is broken by definition (spec §2).
+   * Log every bot in (controller + squad) and resolve when they have all
+   * fired ClientReady. A single failed login (bad token, disallowed
+   * intents) aborts start-up — a fleet missing a callsign, or a controller
+   * that never logs in, is broken by definition.
    */
   async start(readyTimeoutMs = 30_000): Promise<void> {
-    const readies = this.bots.map((entry) => new Promise<void>((resolve, reject) => {
+    const entries = this.allEntries();
+    const readies = entries.map((entry) => new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(
-        `[${entry.member.nato}] did not reach ready within ${readyTimeoutMs}ms`,
+        `[${entry.nato}] did not reach ready within ${readyTimeoutMs}ms`,
       )), readyTimeoutMs);
       entry.client.once(Events.ClientReady, () => { clearTimeout(timer); resolve(); });
       entry.client.once(Events.Error, (err) => { clearTimeout(timer); reject(err); });
     }));
 
-    await Promise.all(this.bots.map((e) => e.client.login(e.member.token)));
+    await Promise.all(entries.map((e) => e.client.login(e.token)));
     await Promise.all(readies);
   }
 
   states(): BotState[] {
     // Refresh live status before returning; it changes without an event.
-    for (const e of this.bots) e.state.status = statusName(e.client.ws.status);
-    return this.bots.map((e) => ({ ...e.state, guildIds: [...e.state.guildIds] }));
+    for (const e of this.allEntries()) e.state.status = statusName(e.client.ws.status);
+    return this.allEntries().map((e) => ({ ...e.state, guildIds: [...e.state.guildIds] }));
   }
 
-  get size(): number { return this.bots.length; }
+  get size(): number { return this.allEntries().length; }
 
   isShuttingDown(): boolean { return this.shuttingDown; }
 
   /**
-   * The Client for a fleet member by NATO name — used by the relay to attach
-   * receive/transmit paths to specific bots (spec §16.3).
+   * The Client for a squad member by NATO name — used by the relay to
+   * attach receive/transmit paths to specific bots (spec §16.3).
    */
   clientFor(nato: string): Client {
-    const e = this.bots.find((b) => b.member.nato === nato);
-    if (e === undefined) throw new Error(`no fleet member with nato=${nato}`);
+    const e = this.squad.find((b) => b.nato === nato);
+    if (e === undefined) throw new Error(`no squad member with nato=${nato}`);
     return e.client;
   }
 
+  /** The controller Client — registrar for /star-bridge, holder of channel-management perms. */
+  controllerClient(): Client { return this.controller.client; }
+
   /**
-   * User IDs of every fleet member that has finished login. Used to drop the
-   * fleet's own audio *before* any detection path — spec §5, the highest-
-   * consequence bug in the product: without this the fleet talks to itself.
-   * A client that has not reached ready has no user yet and is skipped; that
-   * is safe because its audio cannot appear in any voice channel yet either.
+   * User IDs of every fleet member (controller + squad) that has finished
+   * login. Used to drop the fleet's own audio *before* any detection path
+   * — spec §5, the highest-consequence bug in the product: without this
+   * the fleet talks to itself. A client that has not reached ready has no
+   * user yet and is skipped; that is safe because its audio cannot appear
+   * in any voice channel yet either.
    */
   botUserIds(): Set<string> {
     const s = new Set<string>();
-    for (const e of this.bots) {
+    for (const e of this.allEntries()) {
       const id = e.client.user?.id;
       if (id !== undefined) s.add(id);
     }
@@ -205,6 +230,6 @@ export class Fleet {
   async stop(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
-    await Promise.allSettled(this.bots.map((e) => e.client.destroy()));
+    await Promise.allSettled(this.allEntries().map((e) => e.client.destroy()));
   }
 }

@@ -22,8 +22,16 @@ export interface FleetMember {
   applicationId: string;
   /** Resolved from the env var named by `token_env`. Not persisted anywhere. */
   token: string;
-  /** True for exactly one member (spec §2: member Alfa is controller). */
-  controller: boolean;
+}
+
+/**
+ * The 4-bot controller (see CLAUDE.md "Divergence from spec"). A separate
+ * Discord application that registers `/star-bridge` and holds all channel-
+ * management permissions. Not a squad member — never joins voice.
+ */
+export interface ControllerConfig {
+  applicationId: string;
+  token: string;
 }
 
 export interface FleetDefaults {
@@ -39,6 +47,7 @@ export interface FleetDefaults {
 }
 
 export interface FleetConfig {
+  controller: ControllerConfig;
   fleet: FleetMember[];
   defaults: FleetDefaults;
   /** Untyped for step 2 — locales and cue_sets are consumed in later steps. */
@@ -49,7 +58,11 @@ interface RawEntry {
   nato?: unknown;
   application_id?: unknown;
   token_env?: unknown;
-  controller?: unknown;
+}
+
+interface RawController {
+  application_id?: unknown;
+  token_env?: unknown;
 }
 
 interface RawDefaults {
@@ -65,6 +78,7 @@ interface RawDefaults {
 }
 
 interface RawConfig {
+  controller?: unknown;
   fleet?: unknown;
   defaults?: unknown;
 }
@@ -146,15 +160,38 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
   }
   const raw = parsed as RawConfig;
 
+  // The controller is a separate Discord application from any squad member —
+  // see CLAUDE.md "Divergence from spec". It registers /star-bridge and holds
+  // all channel-management permissions; squad bots only join voice.
+  if (!isRecord(raw.controller)) {
+    throw new ConfigError(
+      'controller: block missing. The controller is a separate Discord ' +
+      'application from any squad member; see fleet.example.yaml and CLAUDE.md.',
+    );
+  }
+  const rc = raw.controller as RawController;
+  const controllerAppId = requireString(rc.application_id, 'application_id', 'controller');
+  if (!/^\d{15,20}$/.test(controllerAppId)) {
+    throw new ConfigError(`controller: application_id must be a Discord snowflake, got ${controllerAppId}`);
+  }
+  const controllerTokenEnv = requireString(rc.token_env, 'token_env', 'controller');
+  const controllerTokenRaw = env[controllerTokenEnv];
+  if (controllerTokenRaw === undefined || controllerTokenRaw.trim() === '') {
+    throw new ConfigError(`controller: env var ${controllerTokenEnv} is not set`);
+  }
+  const controller: ControllerConfig = {
+    applicationId: controllerAppId,
+    token: controllerTokenRaw.trim(),
+  };
+
   if (!Array.isArray(raw.fleet) || raw.fleet.length === 0) {
     throw new ConfigError('fleet: must be a non-empty list');
   }
 
   const fleet: FleetMember[] = [];
   const seenNato = new Set<string>();
-  const seenAppId = new Set<string>();
-  const seenTokenEnv = new Set<string>();
-  let controllerCount = 0;
+  const seenAppId = new Set<string>([controllerAppId]);
+  const seenTokenEnv = new Set<string>([controllerTokenEnv]);
 
   for (let i = 0; i < raw.fleet.length; i++) {
     const entry = raw.fleet[i];
@@ -163,6 +200,12 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
       throw new ConfigError(`${at}: must be a mapping`);
     }
     const e = entry as RawEntry;
+    if ('controller' in e) {
+      throw new ConfigError(
+        `${at}: controller flag is no longer supported on squad members. ` +
+        'Define the controller in a top-level `controller:` block instead — see CLAUDE.md.',
+      );
+    }
 
     const natoRaw = requireString(e.nato, 'nato', at).toLowerCase();
     if (!NATO_ORDER.includes(natoRaw)) {
@@ -178,13 +221,13 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
       throw new ConfigError(`${at}: application_id must be a Discord snowflake, got ${applicationId}`);
     }
     if (seenAppId.has(applicationId)) {
-      throw new ConfigError(`${at}: duplicate application_id ${applicationId}`);
+      throw new ConfigError(`${at}: application_id ${applicationId} is already used (controller or another squad member)`);
     }
     seenAppId.add(applicationId);
 
     const tokenEnv = requireString(e.token_env, 'token_env', at);
     if (seenTokenEnv.has(tokenEnv)) {
-      throw new ConfigError(`${at}: duplicate token_env ${tokenEnv}`);
+      throw new ConfigError(`${at}: token_env ${tokenEnv} is already used (controller or another squad member)`);
     }
     seenTokenEnv.add(tokenEnv);
     const token = env[tokenEnv];
@@ -192,17 +235,7 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
       throw new ConfigError(`${at}: env var ${tokenEnv} is not set`);
     }
 
-    const controller = pickBool(e.controller, `${at}.controller`, false);
-    if (controller) controllerCount++;
-
-    fleet.push({ nato: natoRaw, applicationId, token: token.trim(), controller });
-  }
-
-  if (controllerCount !== 1) {
-    throw new ConfigError(
-      `exactly one member must have controller: true — found ${controllerCount}. ` +
-      'The controller registers slash commands and holds channel-management permissions (spec §2).',
-    );
+    fleet.push({ nato: natoRaw, applicationId, token: token.trim() });
   }
 
   fleet.sort((a, b) => NATO_ORDER.indexOf(a.nato) - NATO_ORDER.indexOf(b.nato));
@@ -220,7 +253,7 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
     closeCueEnabled: pickBool(rd.close_cue_enabled, 'defaults.close_cue_enabled', DEFAULTS.closeCueEnabled),
   };
 
-  return { fleet, defaults, raw: parsed };
+  return { controller, fleet, defaults, raw: parsed };
 }
 
 /** For logging: never emit the token. */

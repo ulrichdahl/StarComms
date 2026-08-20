@@ -6,12 +6,20 @@
 # privileged SERVER MEMBERS intent toggled on. Spec §2, §12.
 #
 # Tokens are never stored here — only the name of the env var holding them.
+#
+# The 4-bot layout (see CLAUDE.md "Divergence from spec"): one dedicated
+# controller application + N squad bots. The controller registers
+# /star-bridge and holds channel-management permissions; the squad joins
+# voice.
+
+controller:
+  application_id: "000000000000000000"
+  token_env: SB_TOKEN_CONTROLLER     # registers slash commands, provisions the channel pool
 
 fleet:
   - nato: alfa
     application_id: "000000000000000000"
     token_env: SB_TOKEN_ALFA
-    controller: true      # registers slash commands, holds channel permissions
   - nato: bravo
     application_id: "000000000000000000"
     token_env: SB_TOKEN_BRAVO
@@ -58,7 +66,7 @@ cue_sets:
       busy:      cues/en/busy.wav
     da:
       ready:     cues/da/klar.wav
-      attention: cues/da/opmaerksomhed.wav
+      attention: cues/da/giv_agt.wav
       negative:  cues/da/negativ.wav
       busy:      cues/da/optaget.wav
     shared:

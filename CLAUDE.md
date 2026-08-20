@@ -8,6 +8,24 @@ relays the message audio live.
 it is the contract, and most of the non-obvious constraints are recorded there
 with their reasons.
 
+## Divergence from spec — the 4-bot layout
+
+The spec (§2) puts the controller role on member Alfa — same application both
+registers slash commands AND holds a squad net. This project uses a **separate
+controller application** on top of N squad bots:
+
+- Controller: registers `/star-bridge`, holds `MANAGE_CHANNELS`, `MANAGE_ROLES`,
+  `MOVE_MEMBERS`, `MUTE_MEMBERS`. Does not join voice.
+- Squad: alfa, bravo, charlie, …. Each holds `CONNECT`, `SPEAK`,
+  `PRIORITY_SPEAKER` on the voice channels it is provisioned into. None is a
+  controller.
+
+This is a cleaner separation of concerns and matches the user's Discord
+application layout (the step 1 spike bot becomes the controller). Anywhere the
+spec says "member Alfa is controller", read "the controller application is a
+separate bot". `bots.is_controller` in the §11 schema still applies to the
+controller row; alfa's row has `is_controller = 0`.
+
 ## Hard constraints — violating these breaks the product
 
 - `@discordjs/voice` pinned `^0.19.2`. 0.19.0 and 0.19.1 cannot decrypt received

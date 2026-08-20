@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     console.warn('cues: continuing without them; /trigger will 503 until cues load cleanly');
   }
 
-  const fleet = new Fleet(config.fleet);
+  const fleet = new Fleet(config.controller, config.fleet);
   console.log('logging in fleet...');
   await fleet.start();
   console.log('all members ready');
