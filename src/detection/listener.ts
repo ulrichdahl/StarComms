@@ -53,11 +53,20 @@ interface SpeakerState {
   utterance: Buffer[]; // accumulated mono frames while speech is in progress
   peakRms: number;
   scratch: Buffer;     // spillover between decoded chunks that were not a multiple of a frame
+  /** Held so `pause()` can destroy the underlying AudioReceiveStream and free
+   * the shared receiver.subscribe key for other consumers (e.g. the hail
+   * relay) — see the pause/resume comment in the class. */
+  opus: NodeJS.ReadableStream & { destroy?: () => void };
+  decoder: NodeJS.WritableStream & { destroy?: () => void };
 }
 
 export class DetectionListener extends EventEmitter {
   private readonly speakers = new Map<string, SpeakerState>();
   private stopping = false;
+  /** When true, ignore new speaking.start events and hold no active
+   * receiver.subscribe keys. See pause()/resume() — used by the hail path
+   * to guarantee a fresh receive stream for the same user id. */
+  private paused = false;
 
   constructor(private readonly cfg: DetectionListenerOptions) {
     super();
@@ -68,24 +77,26 @@ export class DetectionListener extends EventEmitter {
     const receiver = this.cfg.connection.receiver;
 
     receiver.speaking.on('start', (userId: string) => {
-      if (this.stopping) return;
+      if (this.stopping || this.paused) return;
       // §5: drop fleet audio at the earliest edge. Without this, cues we
       // play on this same connection re-trigger detection.
       if (this.cfg.fleetUserIds().has(userId)) return;
       if (this.speakers.has(userId)) return;
+
+      const opus = receiver.subscribe(userId, {
+        end: { behavior: EndBehaviorType.AfterSilence, duration: 800 },
+      });
+      const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
 
       const state: SpeakerState = {
         vad: new Vad(),
         utterance: [],
         peakRms: 0,
         scratch: Buffer.alloc(0),
+        opus,
+        decoder,
       };
       this.speakers.set(userId, state);
-
-      const opus = receiver.subscribe(userId, {
-        end: { behavior: EndBehaviorType.AfterSilence, duration: 800 },
-      });
-      const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
 
       decoder.on('data', (chunk: Buffer) => this.onDecoded(userId, chunk));
       decoder.on('error', () => { /* stream will close; state cleaned in release */ });
@@ -93,13 +104,39 @@ export class DetectionListener extends EventEmitter {
 
       const release = (): void => {
         this.speakers.delete(userId);
-        decoder.destroy();
+        decoder.destroy?.();
       };
       opus.on('end', release);
       opus.on('close', release);
       opus.pipe(decoder);
     });
   }
+
+  /**
+   * Suspend detection: destroys every in-flight opus subscription so the
+   * underlying `receiver.subscribe(userId)` key is freed. Another consumer
+   * (currently the hail path) can then subscribe to the same user id and
+   * receive a fresh stream that is not shared with our decoder pipeline.
+   *
+   * `@discordjs/voice` returns the same AudioReceiveStream on repeat
+   * subscribe calls for one user, and two consumers piping from that stream
+   * fight over the flowing-mode data events unreliably — the hail's
+   * AudioResource ends up empty. Releasing the key first fixes that.
+   */
+  pause(): void {
+    this.paused = true;
+    for (const [userId, state] of this.speakers) {
+      state.opus.destroy?.();
+      state.decoder.destroy?.();
+      this.speakers.delete(userId);
+    }
+  }
+
+  resume(): void {
+    this.paused = false;
+  }
+
+  get isPaused(): boolean { return this.paused; }
 
   /**
    * `data` events from prism.opus.Decoder arrive as arbitrary-length s16le

@@ -93,6 +93,7 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
       new Promise<'silence'>((resolve) => opusStream.once('end', () => resolve('silence'))),
       new Promise<'max_hold'>((resolve) => setTimeout(() => resolve('max_hold'), cfg.maxHoldMs)),
     ]);
+    console.log(`hail: ${cfg.commanderUserId} → target closed=${closedBy} opusPackets=${opusPackets}`);
 
     // Out cue on both sides. On max_hold we cut the stream first so the
     // Out cue is not fighting the still-flowing opus for target's player.

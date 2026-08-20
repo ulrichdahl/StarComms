@@ -23,7 +23,7 @@ import { startStatusServer } from './fleet/status.js';
 import { BlindRelay } from './relay/blind.js';
 import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
 import { provisionGuild } from './pool/provisioning.js';
-import { closeSession, openSession, SessionError } from './session/lifecycle.js';
+import { closeSession, detectionFor, openSession, SessionError } from './session/lifecycle.js';
 import type { SessionMode } from './session/model.js';
 import { connectionFor, runSessionRelay } from './session/relay.js';
 import { FakeDriver, type SttDriver } from './detection/stt.js';
@@ -226,17 +226,29 @@ async function main(): Promise<void> {
 
       await interaction.editReply(
         `**Opening hail** → \`${targetCallsign}\`\n` +
-        `Cues play now; then speak in Command. Route closes on ${silenceCloseMs} ms silence or ${maxHoldMs} ms max-hold.`,
+        `Cues play now; then speak in the primary. Route closes on ${silenceCloseMs} ms silence or ${maxHoldMs} ms max-hold.`,
       );
 
-      const result = await runSessionRelay({
-        sourceConnection: sourceConn,
-        targetConnection: targetConn,
-        cues,
-        commanderUserId: interaction.user.id,
-        silenceCloseMs,
-        maxHoldMs,
-      });
+      // Detection and hail both need receiver.subscribe(commanderId) on the
+      // same connection. `@discordjs/voice` returns the same underlying
+      // AudioReceiveStream on repeat subscribes, and two consumers on that
+      // one stream fight for flowing-mode 'data' events. Pausing detection
+      // destroys the in-flight subscription so the hail gets a fresh stream.
+      const detection = detectionFor(guild.id);
+      detection?.pause();
+      let result: Awaited<ReturnType<typeof runSessionRelay>>;
+      try {
+        result = await runSessionRelay({
+          sourceConnection: sourceConn,
+          targetConnection: targetConn,
+          cues,
+          commanderUserId: interaction.user.id,
+          silenceCloseMs,
+          maxHoldMs,
+        });
+      } finally {
+        detection?.resume();
+      }
 
       const summary = result.errorMessage !== null
         ? `hail closed with error: ${result.errorMessage} (packets=${result.opusPackets})`

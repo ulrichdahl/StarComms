@@ -73,6 +73,11 @@ interface SessionRuntime {
 }
 const runtime = new Map<string, SessionRuntime>();
 
+/** Access the live detection listener for a guild's session, if any. */
+export function detectionFor(guildId: string): DetectionListener | null {
+  return runtime.get(guildId)?.detection ?? null;
+}
+
 export interface CloseResult {
   sessionId: number;
   netsClosed: number;
