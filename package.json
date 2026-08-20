@@ -1,0 +1,35 @@
+{
+  "name": "star-bridge",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Speech-routed Discord voice relay for fleet operations",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "spike": "tsx src/spike/receive.ts",
+    "spike:watch": "tsx watch src/spike/receive.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/spike/receive.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.27.0",
+    "libsodium-wrappers": "^0.7.15",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "yaml": "^2.9.0"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,0 +1,51 @@
+name: starbridge
+
+services:
+  bot:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      # Optional so `docker compose config` works before you create it.
+      - path: .env
+        required: false
+    environment:
+      DB_PATH: /data/starbridge.db
+      CONFIG_PATH: /etc/starbridge/fleet.yaml
+      SPIKE_PORT: "3000"
+    volumes:
+      # Persistence, host-mounted. Must be writable by uid 1000 (the node user).
+      - ./data:/data
+      # Whole directory, so a missing fleet.yaml does not break `up`.
+      - ./config:/etc/starbridge:ro
+      - ./cues:/etc/starbridge/cues:ro
+    # No `ports:` — Discord voice is outbound UDP only and /healthz is internal.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  # Not needed until step 5. Behind a profile so the spike does not pull a
+  # multi-gigabyte CUDA image: `docker compose --profile stt up`.
+  stt:
+    profiles: ["stt"]
+    image: ghcr.io/speaches-ai/speaches:latest-cuda   # pin by digest in prod
+    restart: unless-stopped
+    expose: ["8000"]
+    volumes:
+      - stt-models:/home/ubuntu/.cache/huggingface
+    environment:
+      # Multilingual. NOT a distil model — those are English-only. Spec §10.
+      WHISPER__MODEL: Systran/faster-whisper-large-v3
+      WHISPER__LANGUAGE: da
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      start_period: 120s
+      retries: 5
+
+volumes:
+  stt-models:

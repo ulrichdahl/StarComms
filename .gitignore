@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime state — host-mounted, never committed
+data/*
+!data/.gitkeep
+
+# operator-supplied cue audio
+cues/**/*.wav
+cues/**/*.ogg
+cues/**/*.opus
+
+# real fleet config (tokens by ref, channel ids)
+config/fleet.yaml
+config/fleet.dev.yaml

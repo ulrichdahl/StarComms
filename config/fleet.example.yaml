@@ -1,0 +1,66 @@
+# Star Bridge fleet configuration.
+# Copy to config/fleet.yaml (gitignored) and fill in.
+#
+# One entry per Discord application. There is no API for creating applications,
+# so each is registered by hand in the developer portal, and each needs the
+# privileged SERVER MEMBERS intent toggled on. Spec §2, §12.
+#
+# Tokens are never stored here — only the name of the env var holding them.
+
+fleet:
+  - nato: alfa
+    application_id: "000000000000000000"
+    token_env: SB_TOKEN_ALFA
+    controller: true      # registers slash commands, holds channel permissions
+  - nato: bravo
+    application_id: "000000000000000000"
+    token_env: SB_TOKEN_BRAVO
+  - nato: charlie
+    application_id: "000000000000000000"
+    token_env: SB_TOKEN_CHARLIE
+
+# Per-guild overridable defaults. Spec §5.
+defaults:
+  locale: en
+  mute_mode: priority_speaker    # priority_speaker | hard_mute
+  stt_driver: whisper_local      # whisper_local | deepgram | fake
+  cue_set: default
+  cue_duration_ms: 1200          # D_c — every cue asset is normalised to this
+  open_timeout_ms: 5000          # Ready played, nobody spoke -> close
+  silence_close_ms: 2000         # speech ended -> close
+  max_hold_ms: 60000             # hard cap on a held net
+  close_cue_enabled: true
+
+# Spoken forms per intent. Several accepted per intent; extended at runtime
+# from the alias_variants table as operators hit misrecognitions. Spec §10.
+locales:
+  en:
+    alert:     [alert]
+    broadcast: [broadcast]
+    hail:      [hail]
+    command:   [command]
+    out:       [out]
+  da:
+    alert:     [alarm]
+    broadcast: [udsend]
+    hail:      [kald]
+    command:   [ordre]
+    out:       [slut]
+
+# Cue audio. Startup validates every asset against cue_duration_ms and fails
+# loudly on mismatch — an unequal Attention/Horn pair clips first words. §5.
+cue_sets:
+  default:
+    en:
+      ready:     cues/en/ready.wav
+      attention: cues/en/attention.wav
+      negative:  cues/en/negative.wav
+      busy:      cues/en/busy.wav
+    da:
+      ready:     cues/da/klar.wav
+      attention: cues/da/opmaerksomhed.wav
+      negative:  cues/da/negativ.wav
+      busy:      cues/da/optaget.wav
+    shared:
+      horn:      cues/horn.wav      # length must equal attention
+      out:       cues/out.wav

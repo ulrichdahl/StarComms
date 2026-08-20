@@ -1,0 +1,30 @@
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  bot:
+    environment:
+      NODE_ENV: production
+      LOG_FORMAT: json
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  stt:
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-large-v3
+      WHISPER__LANGUAGE: da
+      WHISPER__COMPUTE_TYPE: float16
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Requires nvidia-container-toolkit on the host.
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

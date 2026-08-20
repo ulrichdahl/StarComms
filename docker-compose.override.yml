@@ -1,0 +1,20 @@
+# Auto-loaded by `docker compose up`. Development only.
+services:
+  bot:
+    build:
+      target: dev
+    restart: "no"
+    volumes:
+      - ./src:/app/src:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./data:/data
+      - ./config:/etc/starbridge:ro
+      - ./cues:/etc/starbridge/cues:ro
+    environment:
+      NODE_ENV: development
+
+  stt:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-tiny
+      WHISPER__LANGUAGE: da
