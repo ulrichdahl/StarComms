@@ -23,6 +23,8 @@ import { startStatusServer } from './fleet/status.js';
 import { BlindRelay } from './relay/blind.js';
 import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
 import { provisionGuild } from './pool/provisioning.js';
+import { closeSession, openSession, SessionError } from './session/lifecycle.js';
+import type { SessionMode } from './session/model.js';
 
 async function main(): Promise<void> {
   const startedAt = new Date();
@@ -98,6 +100,57 @@ async function main(): Promise<void> {
         lines.push(`\`${b.role.padEnd(10)}\` **${b.nato}** — ${b.status} ${b.tag ?? ''} guilds=${b.guildIds.length}`);
       }
       await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
+    },
+    open: async (interaction) => {
+      const guild = interaction.guild;
+      if (guild === null) {
+        await interaction.reply({ content: 'this command must be used in a guild', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const mode = interaction.options.getString('mode', true) as SessionMode;
+      const squads = interaction.options.getInteger('squads') ?? 3;
+      try {
+        const result = await openSession({
+          guild, ownerId: interaction.user.id, mode, squads, fleet, db,
+        });
+        const netLines = result.nets.map(
+          (n) => `• ${n.callsign} — <#${n.channelId}> (bot: ${n.botKey})`,
+        );
+        const body = [
+          `**Session ${result.sessionId} open** — mode ${result.mode}, ${result.nets.length} net(s)`,
+          ...netLines,
+          '',
+          `You have been moved into ${result.nets[0]?.callsign ?? 'the primary net'}. Use \`/star-bridge close\` to end the session.`,
+        ];
+        await interaction.editReply(body.join('\n'));
+      } catch (err) {
+        if (err instanceof SessionError) {
+          await interaction.editReply(`open failed: ${err.message}`);
+          return;
+        }
+        throw err;
+      }
+    },
+    close: async (interaction) => {
+      const guild = interaction.guild;
+      if (guild === null) {
+        await interaction.reply({ content: 'this command must be used in a guild', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        const result = await closeSession({ guild, fleet, db });
+        const line = `**Session ${result.sessionId} closed** — ${result.netsClosed} net(s)`
+          + (result.strandedMoved > 0 ? `, moved ${result.strandedMoved} straggler(s) to AFK` : '');
+        await interaction.editReply(line);
+      } catch (err) {
+        if (err instanceof SessionError) {
+          await interaction.editReply(`close failed: ${err.message}`);
+          return;
+        }
+        throw err;
+      }
     },
   };
   const registrar = makeRegistrar(config.controller, fleet.controllerClient(), handlers);

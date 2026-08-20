@@ -13,20 +13,20 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 5a of 9** (spec §16): init half of step 5. Steps 1–4 passed.
+**Step 5b of 9** (spec §16): session lifecycle. Steps 1–5a passed.
 
-Adds a fourth "main" application (see CLAUDE.md "Divergence from spec"):
-it runs `/star-bridge` slash commands AND will occupy the command net's
-voice channel when a session opens. `/star-bridge init` provisions a
-category (renamable by the guild) plus a single control text channel.
-**Voice channels are created per session** (step 5b) and deleted at
-teardown — the earlier "hidden pool of N voice channels" design in spec
-§4 is superseded (see §17 #4).
+`/star-bridge open <mode> <squads>` opens a session: creates one voice
+channel per net (Command / Alpha / Bravo / Charlie in command mode, or
+Head Ops / Alpha Ops / … in joint mode), joins the main bot into the
+primary net and squad bots into the rest, then MOVE_MEMBERS the invoker
+into the primary channel. `/star-bridge close` reverses it, moves any
+stragglers to the guild's AFK channel, and deletes the voice channels.
 
-The step 5a build does **not** yet include the session wizard, lead
-selection, teardown timer, or AFK move — those land in step 5b. The blind
-relay from step 3 still runs hardcoded bravo → charlie; step 6 replaces
-the hardcoded pair with session-driven routing.
+The step 5b build does **not** yet include lead selection UI, XO
+promotion, teardown timer, or session-driven relay — those land in step
+5b's follow-up or step 6. The blind relay from step 3 still runs
+hardcoded bravo → charlie when configured; step 6 replaces it with
+session-driven routing.
 
 The step 4 build loads six cue assets (`ready`, `attention`, `horn`,
 `negative`, `busy`, `out`) at startup, decodes them via ffmpeg, re-encodes
@@ -128,6 +128,58 @@ control channel as "reused". Delete either manually and re-run to see
 init recreate it.
 
 `/star-bridge status` reports the current fleet state.
+
+## Running /star-bridge open + close (step 5b)
+
+**Preconditions:** you must already be in a voice channel — the
+controller cannot MOVE_MEMBERS you into the command net from outside
+voice. Any voice channel in the guild works; the wizard moves you.
+
+```
+/star-bridge open mode:command squads:2
+```
+
+Expected in the sidebar:
+
+- Two new voice channels under `Star Bridge`: `Command`, `Alpha`, `Bravo`
+  (`squads:2` = primary + 2 squad).
+- Main bot in `Command`, alfa in `Alpha`, bravo in `Bravo` — charlie is
+  idle for this session.
+- Your voice presence has been moved into `Command`.
+
+Expected ephemeral reply:
+
+```
+Session 1 open — mode command, 3 net(s)
+• Command — <#…> (bot: main)
+• Alpha — <#…> (bot: alfa)
+• Bravo — <#…> (bot: bravo)
+
+You have been moved into Command. Use /star-bridge close to end the session.
+```
+
+`/star-bridge open mode:joint squads:3` opens four nets: Head Ops,
+Alpha Ops, Bravo Ops, Charlie Ops. Same shape.
+
+`/star-bridge close`:
+
+- Every fleet bot leaves voice.
+- Any humans still in the session's voice channels are moved to the
+  guild's AFK channel (if configured — check Server Settings → Overview
+  → Inactive Channel).
+- The voice channels are deleted.
+- The ephemeral reply reports `Session N closed — X net(s), moved Y
+  straggler(s) to AFK`.
+
+### What can go wrong
+
+| Symptom | Cause |
+|---|---|
+| `open failed: join a voice channel first...` | You ran /star-bridge open without being in voice. Join any voice channel and re-run. |
+| `open failed: this guild has not been initialised...` | Run `/star-bridge init` first. |
+| `open failed: a session is already open in this guild` | Run `/star-bridge close` first (or an earlier crash left a stale row — boot sweep will handle it, or delete the row from `data/starbridge.db`). |
+| `open failed: controller lacks MANAGE_CHANNELS...` | Re-invite the controller with the URL in step 5a — its permissions on your guild are too tight. |
+| Bots create the channels but never appear in them | Squad bots need Connect at guild level. Re-invite with permissions=3146752. |
 
 ## Running the blind relay (step 3)
 
@@ -323,8 +375,10 @@ src/relay/blind.ts        step 3+4: audio bridge + cue playback
 src/relay/metrics.ts      relay stats + §5 fleet suppression check
 src/lib/cues.ts           step 4: cue loader, equal-duration validation
 src/commands/registrar.ts step 5a: /star-bridge slash-command dispatcher
-src/commands/star-bridge.ts   /star-bridge command tree
-src/pool/provisioning.ts  step 5a: channel-pool creation + repair
+src/commands/star-bridge.ts   /star-bridge command tree (init/open/close/status)
+src/pool/provisioning.ts  step 5a: category + control channel provisioning
+src/session/model.ts      step 5b: session mode + net naming
+src/session/lifecycle.ts  step 5b: open/close orchestration
 scripts/gen-cues.sh       placeholder cue generator (sine waves via ffmpeg)
 src/lib/config.ts         fleet.yaml + token env resolution
 src/lib/db.ts             SQLite, WAL, full §11 schema
@@ -363,8 +417,8 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 
 ## Next
 
-Step 5b: the session wizard. `/star-bridge open` modal, lead selection,
-target callsigns, session row, teardown timer, MOVE_MEMBERS the lead into
-the command net, AFK-move for stragglers at close. The blind relay's
-hardcoded bravo→charlie routing will be replaced by session-driven wiring
-in step 6.
+Step 6: call-up protocol. VAD + local Whisper STT on the primary net,
+verb + callsign grammar, callsign matcher against the active session's
+nets, per-net state machine, locks, timers. The blind relay's hardcoded
+bravo→charlie pair is retired here — the router resolves a call-up to a
+target net from the live session table instead.
