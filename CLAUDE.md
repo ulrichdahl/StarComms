@@ -25,6 +25,13 @@ with their reasons.
 - Cue assets must be equal length and validated at startup. (§5)
 - `selfDeaf` on send-only squad nets only. Never `selfMute` — every listening
   bot must be able to play cues. (§3, §6)
+- **Every `joinVoiceChannel` call must set `group` to a value unique per bot**
+  (we use the joining client's `user.id`). `@discordjs/voice` keys connections
+  by `(guildId, group)` with default `'default'`; without per-bot scoping a
+  second bot's join rebinds the first bot's connection to the new channel and
+  the second bot never actually joins. This bit us in step 3 — bravo appeared
+  in the target channel and charlie never connected, with both `entersState`
+  calls resolving Ready against the same shared connection.
 
 ## Build order
 

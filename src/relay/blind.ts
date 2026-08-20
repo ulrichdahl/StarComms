@@ -91,17 +91,24 @@ export class BlindRelay {
     const source = await this.resolveChannel(this.cfg.sourceClient, this.cfg.sourceChannelId, 'source');
     const target = await this.resolveChannel(this.cfg.targetClient, this.cfg.targetChannelId, 'target');
 
-    this.sourceConnection = this.join(source, { selfDeaf: false });
+    this.sourceConnection = this.join(this.cfg.sourceClient, source, { selfDeaf: false });
     this.wireConnection(this.sourceConnection, 'source');
     await entersState(this.sourceConnection, VoiceConnectionStatus.Ready, 20_000);
     this.metrics.sourceReady = true;
     console.log(`relay: source ready — listening on ${source.name}`);
 
-    this.targetConnection = this.join(target, { selfDeaf: true });
+    this.targetConnection = this.join(this.cfg.targetClient, target, { selfDeaf: true });
     this.wireConnection(this.targetConnection, 'target');
     await entersState(this.targetConnection, VoiceConnectionStatus.Ready, 20_000);
     this.metrics.targetReady = true;
     console.log(`relay: target ready — transmitting on ${target.name}`);
+
+    if (this.sourceConnection === this.targetConnection) {
+      // A regression guard for the bug this fix repaired: if joinVoiceChannel
+      // returned the same object for both legs, either both `group`s got the
+      // same value or the SDK's keying changed and this whole module is a lie.
+      throw new Error('relay: source and target ended up sharing a VoiceConnection — group scoping is broken');
+    }
 
     this.targetConnection.subscribe(this.player);
     this.attachReceiver(this.sourceConnection);
@@ -115,13 +122,24 @@ export class BlindRelay {
     return c;
   }
 
-  private join(channel: VoiceBasedChannel, { selfDeaf }: { selfDeaf: boolean }): VoiceConnection {
+  private join(client: Client, channel: VoiceBasedChannel, { selfDeaf }: { selfDeaf: boolean }): VoiceConnection {
+    const userId = client.user?.id;
+    if (userId === undefined) {
+      throw new Error('relay: cannot join before the client has logged in');
+    }
     return joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
       adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf,
       selfMute: false, // never selfMute (§3)
+      // @discordjs/voice keys connections by (guildId, group), default
+      // 'default'. When N bots share a guild — the fleet's whole reason
+      // for existing — a second join with the same key rebinds the first
+      // bot's connection to the second channel instead of opening a new
+      // one for the second bot. Scoping by the joining bot's user id is
+      // the natural per-connection key. See CLAUDE.md.
+      group: userId,
     });
   }
 
