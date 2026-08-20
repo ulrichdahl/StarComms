@@ -43,12 +43,20 @@ import { DetectionListener, type Detection } from '../detection/listener.js';
 import type { SttDriver } from '../detection/stt.js';
 import { netsFor, type NetRole, type NetSpec, type SessionMode, type SessionNet } from './model.js';
 
+export type MoveOwnerResult =
+  | { moved: true }
+  | { moved: false; reason: string };
+
 export interface OpenResult {
   sessionId: number;
   guildId: string;
   mode: SessionMode;
   ownerId: string;
   nets: SessionNet[];
+  /** Whether the invoker was moved into the primary net, and why not if
+   * skipped. Discord blocks bots from moving the guild owner regardless
+   * of the bot's permissions, so this is a legitimate soft-fail. */
+  moveOwner: MoveOwnerResult;
   /** Present when an STT driver was supplied — the detection listener on
    * the primary net. Held so closeSession can tear it down. */
   detection: DetectionListener | null;
@@ -229,13 +237,28 @@ export async function openSession(args: {
   }
 
   // Move the owner into the primary net. Requires MOVE_MEMBERS on the
-  // controller (part of the invite scope in the README).
+  // controller (part of the invite scope in the README) AND the target
+  // must not be the guild owner — Discord protects the guild owner from
+  // any bot-driven member modification, regardless of permissions or
+  // Administrator status.
   const primary = nets[0];
+  let moveOwner: MoveOwnerResult = { moved: false, reason: 'no primary net' };
   if (primary !== undefined) {
-    try {
-      await ownerMember.voice.setChannel(primary.channelId, `Star Bridge: session ${sessionId} owner`);
-    } catch (err) {
-      console.error(`session ${sessionId}: MOVE_MEMBERS failed: ${err instanceof Error ? err.message : err}`);
+    if (ownerMember.id === guild.ownerId) {
+      moveOwner = {
+        moved: false,
+        reason: 'you are the guild owner — Discord blocks bots from moving the guild owner. Join the primary net manually.',
+      };
+      console.warn(`session ${sessionId}: skipping MOVE_MEMBERS — invoker is the guild owner`);
+    } else {
+      try {
+        await ownerMember.voice.setChannel(primary.channelId, `Star Bridge: session ${sessionId} owner`);
+        moveOwner = { moved: true };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        moveOwner = { moved: false, reason };
+        console.error(`session ${sessionId}: MOVE_MEMBERS failed: ${reason}`);
+      }
     }
   }
 
@@ -263,7 +286,7 @@ export async function openSession(args: {
   }
 
   runtime.set(guild.id, { sessionId, detection });
-  return { sessionId, guildId: guild.id, mode, ownerId, nets, detection };
+  return { sessionId, guildId: guild.id, mode, ownerId, nets, moveOwner, detection };
 }
 
 export async function closeSession(args: {

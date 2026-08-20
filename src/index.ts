@@ -138,11 +138,16 @@ async function main(): Promise<void> {
         const netLines = result.nets.map(
           (n) => `• ${n.callsign} — <#${n.channelId}> (bot: ${n.botKey})`,
         );
+        const primary = result.nets[0]?.callsign ?? 'the primary net';
+        const moveLine = result.moveOwner.moved
+          ? `You have been moved into ${primary}.`
+          : `⚠ Not moved into ${primary}: ${result.moveOwner.reason}`;
         const body = [
           `**Session ${result.sessionId} open** — mode \`${result.mode}\`, primary + ${squads} squad(s), ${result.nets.length} net(s) total`,
           ...netLines,
           '',
-          `You have been moved into ${result.nets[0]?.callsign ?? 'the primary net'}. Use \`/star-bridge close\` to end the session.`,
+          moveLine,
+          `Use \`/star-bridge close\` to end the session.`,
         ];
         await interaction.editReply(body.join('\n'));
       } catch (err) {
