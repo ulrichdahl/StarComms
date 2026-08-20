@@ -30,7 +30,7 @@
  */
 
 import {
-  ChannelType, PermissionFlagsBits,
+  ChannelType, OverwriteType, PermissionFlagsBits,
   type CategoryChannel, type Client, type Guild, type VoiceBasedChannel,
 } from 'discord.js';
 import {
@@ -90,17 +90,54 @@ export async function openSession(args: {
   const specs = netsFor(mode, squads);
   const nets: SessionNet[] = [];
 
+  // Resolve every assigned bot's user id up front so we can attach explicit
+  // permission overwrites on each session channel. That protects us against a
+  // category inherited from an earlier design that had @everyone deny
+  // VIEW_CHANNEL — the child channel's per-member allow trumps category deny.
+  const assignedUserIds = new Map<string, string>();
+  for (const spec of specs) {
+    const client = clientForBotKey(fleet, spec.botKey);
+    const id = client.user?.id;
+    if (id !== undefined) assignedUserIds.set(spec.botKey, id);
+  }
+
   // Create the channels first, before any DB inserts, so a failure mid-way
   // leaves no half-inserted session row. Individual channel-create failures
   // are surfaced as a SessionError with partial cleanup.
   const created: VoiceBasedChannel[] = [];
   try {
     for (const spec of specs) {
+      const botUserId = assignedUserIds.get(spec.botKey);
+      const overwrites = botUserId === undefined ? [] : [
+        {
+          id: botUserId,
+          type: OverwriteType.Member,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.Connect,
+            PermissionFlagsBits.Speak,
+          ],
+        },
+        // Give the session owner an explicit allow too. If a stale category
+        // inherits deny VIEW_CHANNEL from an earlier design, the owner would
+        // be moved into an invisible channel — a confusing UX. This is a no-op
+        // when the category is transparent.
+        {
+          id: ownerId,
+          type: OverwriteType.Member,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.Connect,
+            PermissionFlagsBits.Speak,
+          ],
+        },
+      ];
       const channel = await guild.channels.create({
         name: spec.callsign,
         type: ChannelType.GuildVoice,
         parent: category.id,
         reason: `Star Bridge session (${mode})`,
+        permissionOverwrites: overwrites,
       });
       created.push(channel);
       nets.push({ ...spec, channelId: channel.id });
@@ -156,7 +193,16 @@ export async function openSession(args: {
         selfMute: false,           // never selfMute — must be able to play cues
         group: requireUserId(client, net.botKey),
       });
+      // Diagnostic logging — this bit us twice in step 5b. Leave in for now;
+      // move to debug-only later.
+      const tag = `[${net.botKey}/${net.callsign}]`;
+      conn.on('stateChange', (from, to) => {
+        const extra = 'reason' in to ? ` reason=${String((to as { reason: unknown }).reason)}` : '';
+        console.log(`session ${sessionId} ${tag} ${from.status} -> ${to.status}${extra}`);
+      });
+      conn.on('error', (e) => console.error(`session ${sessionId} ${tag} error: ${e.message}`));
       await entersState(conn, VoiceConnectionStatus.Ready, 20_000);
+      console.log(`session ${sessionId} ${tag} ready`);
     } catch (err) {
       console.error(`session ${sessionId}: ${net.botKey} failed to join ${net.callsign}: ${err instanceof Error ? err.message : err}`);
     }
