@@ -68,19 +68,56 @@ export interface StatusServerOptions {
   relay: BlindRelay | null;
 }
 
+/**
+ * Fire the ready/attention cue pair through the active relay. Not a slash
+ * command — those need the controller (alfa) to register per-guild, which
+ * arrives with the wizard in step 5. `/trigger` is the step 4 test surface.
+ * Verbs recognised: hail, command, broadcast (all fire the same pair for
+ * step 4 — grammar-differentiated cues are step 6).
+ */
+function fireTrigger(relay: BlindRelay | null, verb: string): { status: number; body: object } {
+  if (relay === null) {
+    return { status: 503, body: { error: 'relay not configured' } };
+  }
+  if (!relay.hasCues()) {
+    return { status: 503, body: { error: 'cue engine not loaded' } };
+  }
+  const accepted = new Set(['hail', 'command', 'broadcast']);
+  if (!accepted.has(verb)) {
+    return { status: 400, body: { error: `unknown verb ${verb}; accepted: ${[...accepted].join(', ')}` } };
+  }
+  try {
+    // Every accepted verb opens a net: Ready to the caller, Attention to the receivers.
+    // Alert (Horn) is step 6 — until then this endpoint mirrors the hail/command/broadcast
+    // trio, which all share the same cue pair per §5.
+    relay.playCuePair('ready', 'attention');
+    return { status: 202, body: { fired: 'ready+attention', verb } };
+  } catch (err) {
+    return { status: 500, body: { error: err instanceof Error ? err.message : String(err) } };
+  }
+}
+
 export function startStatusServer(opts: StatusServerOptions): Server {
   const server = createServer((req, res) => {
-    if (req.url !== '/healthz') {
-      res.writeHead(404).end();
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/healthz' && req.method === 'GET') {
+      const relayStats = opts.relay === null ? emptyRelayStats() : opts.relay.snapshot();
+      const report = buildReport(opts.fleet, opts.sweep, relayStats, opts.startedAt);
+      const status = report.verdict === 'fail' ? 503 : 200;
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(report, null, 2));
       return;
     }
-    const relayStats = opts.relay === null ? emptyRelayStats() : opts.relay.snapshot();
-    const report = buildReport(opts.fleet, opts.sweep, relayStats, opts.startedAt);
-    const status = report.verdict === 'fail' ? 503 : 200;
-    res.writeHead(status, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(report, null, 2));
+    if (url.pathname === '/trigger' && req.method === 'POST') {
+      const verb = url.searchParams.get('verb') ?? 'hail';
+      const { status, body } = fireTrigger(opts.relay, verb);
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+    res.writeHead(404).end();
   });
   server.listen(opts.port, '0.0.0.0', () =>
-    console.log(`health: http://localhost:${opts.port}/healthz`));
+    console.log(`health: http://localhost:${opts.port}/healthz    trigger: POST /trigger?verb=hail`));
   return server;
 }

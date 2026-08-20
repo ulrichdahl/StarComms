@@ -15,6 +15,7 @@
 import { intEnv, loadEnv, optionalEnv } from './lib/env.js';
 import { loadConfig, redactMember } from './lib/config.js';
 import { openDb } from './lib/db.js';
+import { loadCueSet, resolveCuePaths, type CueSet } from './lib/cues.js';
 import { bootSweep, formatSweep } from './fleet/boot-sweep.js';
 import { Fleet } from './fleet/manager.js';
 import { startStatusServer } from './fleet/status.js';
@@ -42,6 +43,23 @@ async function main(): Promise<void> {
   const sweep = bootSweep(db);
   console.log(formatSweep(sweep));
 
+  // Cues are loaded before the fleet touches voice: an invalid asset should
+  // fail the boot loud, not silently disable the trigger endpoint later.
+  // See spec §5. If the yaml has no cue_sets, the fleet still comes up
+  // without cues — but /trigger will 503.
+  let cues: CueSet | null = null;
+  try {
+    const paths = resolveCuePaths(config.raw, config.defaults.cueSet, config.defaults.locale);
+    cues = await loadCueSet(paths, config.defaults.cueDurationMs);
+    console.log(`cues: loaded ${cues.summary().length} at ~${config.defaults.cueDurationMs} ms each`);
+    for (const c of cues.summary()) {
+      console.log(`  ${c.name.padEnd(10)} ${String(c.durationMs).padStart(5)} ms  ${c.packets} packets  ${c.path}`);
+    }
+  } catch (err) {
+    console.warn(`cues: not loaded — ${err instanceof Error ? err.message : String(err)}`);
+    console.warn('cues: continuing without them; /trigger will 503 until cues load cleanly');
+  }
+
   const fleet = new Fleet(config.fleet);
   console.log('logging in fleet...');
   await fleet.start();
@@ -56,10 +74,11 @@ async function main(): Promise<void> {
       sourceChannelId: relaySource,
       targetChannelId: relayTarget,
       fleetUserIds: () => fleet.botUserIds(),
+      cues: cues ?? undefined,
     });
     try {
       await relay.start();
-      console.log('relay: bridge open');
+      console.log(`relay: bridge open${cues !== null ? ' — cues armed' : ''}`);
     } catch (err) {
       console.error(`relay: failed to start — ${err instanceof Error ? err.message : String(err)}`);
       // Do not exit — the fleet is still useful for diagnostics without the relay.

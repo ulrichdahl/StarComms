@@ -13,22 +13,29 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 3 of 9** (spec §16): the blind relay. Steps 1 and 2 passed.
+**Step 4 of 9** (spec §16): the cue engine. Steps 1–3 passed.
 
-The step 3 build adds an unconditional audio bridge on top of the fleet:
-bravo joins one voice channel and listens, charlie joins another and
-transmits every non-fleet speaker's opus straight through. No STT, no cues,
-no call-up protocol — the point of this step is to measure the additive
-routing latency, confirm no join chime is emitted between transmissions
-(the connection is held open, silence frames included), and verify §5 fleet
-suppression drops the fleet's own audio *before* it enters the relay path.
+The step 4 build loads six cue assets (`ready`, `attention`, `horn`,
+`negative`, `busy`, `out`) at startup, decodes them via ffmpeg, re-encodes
+to Opus frames, and caches the packets in memory. Every asset in the
+active set must match `cue_duration_ms` within a small tolerance — the
+strict trio (ready/attention/horn) enforces ±40 ms because unequal lengths
+clip the first word of every transmission (§5). Startup fails loud on a
+mismatch.
 
-The step 3 build does **not** implement callsigns, verbs, cues, session
-state, mirror embeds, ducking, or the priority-speaker mute mode.
+Cue playback is exposed through `POST /trigger?verb=hail|command|broadcast`
+on the status server. Bravo plays `Ready` into the source channel and
+charlie plays `Attention` into the target simultaneously, with the delta
+between the two AudioPlayers' Playing state transitions surfaced via
+`/healthz .relay.cues.peakSyncErrorMs`.
+
+The step 4 build does **not** implement STT, callsign detection, verb
+grammar, session lifecycle, mirror embeds, ducking, or the
+priority-speaker mute mode. `/trigger` is manual — voice-driven triggers
+arrive with step 6.
 
 Earlier steps are retained: `src/spike/receive.ts` still runs via
-`npm run spike` for DAVE-receive regression diagnosis. Step 2's fleet
-manager is now the base that step 3 sits on.
+`npm run spike` for DAVE-receive regression diagnosis.
 
 ## Running the fleet (step 2)
 
@@ -141,6 +148,59 @@ Manual verification bar:
 | Bravo joins, no audio arrives | Source channel has permission overwrites hiding it from bravo. |
 | Charlie joins but nobody hears audio | Charlie lacks Speak on the target — grant it. |
 | Latency > 500 ms consistently | Opus decode path was substituted for the direct forward — check the code around `StreamType.Opus`. |
+| Bravo in target channel, charlie missing | `joinVoiceChannel` needs `group` per bot. Fixed since commit b00328d — regression guard is in `blind.ts`. |
+
+## Running the cue engine (step 4)
+
+Cues load at startup from `config/fleet.yaml` `cue_sets.<name>.<locale>`.
+Bravo also needs `Speak` on the source channel to play `Ready` — grant it
+alongside the target-side `Speak` for charlie.
+
+### 1. Generate placeholder cues (or drop your own)
+
+```bash
+scripts/gen-cues.sh
+```
+
+Writes six 1200 ms sine-wave WAVs into `cues/en/` and `cues/`. Distinct
+frequencies per cue, so you can tell them apart by ear during the test.
+Real cues (TTS or recorded) drop in later without code changes: same
+filenames, same equal duration, same 48 kHz stereo.
+
+### 2. Verify at startup
+
+```
+cues: loaded 6 at ~1200 ms each
+  ready       1200 ms  60 packets  cues/en/ready.wav
+  attention   1200 ms  60 packets  cues/en/attention.wav
+  ...
+relay: bridge open — cues armed
+health: http://localhost:3000/healthz    trigger: POST /trigger?verb=hail
+```
+
+### 3. Fire a call-up
+
+```bash
+docker compose exec bot curl -sS -X POST 'http://localhost:3000/trigger?verb=hail' | jq
+```
+
+Expected:
+- A tone plays in **reception** (bravo, `Ready`) and simultaneously in
+  **test 1** (charlie, `Attention`) — different frequencies, same length.
+- The endpoint returns `202 { "fired": "ready+attention", "verb": "hail" }`.
+- `docker compose exec bot curl -s http://localhost:3000/healthz | jq .relay.cues`:
+  ```
+  {
+    "loaded": true,
+    "count": 1,
+    "lastSyncErrorMs": 8,
+    "peakSyncErrorMs": 8,
+    "lastPair": { "source": "ready", "target": "attention" },
+    "lastPlayedAt": "2026-08-20T..."
+  }
+  ```
+  `peakSyncErrorMs` under 50 ms is a pass. Anything > 100 ms indicates
+  the two AudioPlayers are drifting on kickoff — investigate before step 5.
 
 ## Running the receive spike (step 1)
 
@@ -222,8 +282,10 @@ src/spike/receive.ts      step 1: decrypted per-SSRC PCM under DAVE (kept)
 src/fleet/manager.ts      one process, N gateway-parked clients
 src/fleet/boot-sweep.ts   crash recovery — runs before the fleet connects
 src/fleet/status.ts       /healthz JSON: per-member verdict
-src/relay/blind.ts        step 3: hardcoded source→target audio bridge
+src/relay/blind.ts        step 3+4: audio bridge + cue playback
 src/relay/metrics.ts      relay stats + §5 fleet suppression check
+src/lib/cues.ts           step 4: cue loader, equal-duration validation
+scripts/gen-cues.sh       placeholder cue generator (sine waves via ffmpeg)
 src/lib/config.ts         fleet.yaml + token env resolution
 src/lib/db.ts             SQLite, WAL, full §11 schema
 src/lib/audio.ts          PCM level metering (spike)
@@ -261,7 +323,7 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 
 ## Next
 
-Step 4: cue engine. Pre-encoded Opus assets, duration validation at startup,
-simultaneous playback into source and target so the caller and the receiver
-both hear `Ready` and `Attention` at exactly the same time. Testable with a
-hard-coded call-up before the STT and grammar work of step 6.
+Step 5: pool + sessions. Permission-overwrite channel provisioning, the
+`/star-bridge` wizard, lead selection, session teardown timer, AFK move
+for stragglers. First step where alfa exercises its controller role and
+the channel_pool table earns its keep.

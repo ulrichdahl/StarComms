@@ -13,6 +13,16 @@
  * suppression is doing real work.
  */
 
+export interface CueStats {
+  loaded: boolean;
+  count: number;
+  /** Absolute delta between source and target Playing state transitions. */
+  lastSyncErrorMs: number | null;
+  peakSyncErrorMs: number | null;
+  lastPair: { source: string; target: string } | null;
+  lastPlayedAt: string | null;
+}
+
 export interface RelayStatsSnapshot {
   configured: boolean;
   sourceChannelId: string;
@@ -24,6 +34,7 @@ export interface RelayStatsSnapshot {
   fleetAudioDropped: number;
   lastLatencyMs: number | null;
   peakLatencyMs: number | null;
+  cues: CueStats;
   errors: string[];
 }
 
@@ -38,10 +49,32 @@ export class RelayMetrics {
   public sourceReady = false;
   public targetReady = false;
 
+  private cuesLoaded = false;
+  private cueCount = 0;
+  private lastSyncErrorMs: number | null = null;
+  private peakSyncErrorMs: number | null = null;
+  private lastPair: { source: string; target: string } | null = null;
+  private lastPlayedAt: string | null = null;
+
   constructor(
     private readonly sourceChannelId: string,
     private readonly targetChannelId: string,
   ) {}
+
+  markCuesLoaded(): void { this.cuesLoaded = true; }
+
+  onCuePairFired(source: string, target: string): void {
+    this.cueCount++;
+    this.lastPair = { source, target };
+    this.lastPlayedAt = new Date().toISOString();
+  }
+
+  onCueSyncError(deltaMs: number): void {
+    this.lastSyncErrorMs = deltaMs;
+    if (this.peakSyncErrorMs === null || deltaMs > this.peakSyncErrorMs) {
+      this.peakSyncErrorMs = deltaMs;
+    }
+  }
 
   onFleetDrop(): void { this.fleetAudioDropped++; }
 
@@ -86,6 +119,14 @@ export class RelayMetrics {
       fleetAudioDropped: this.fleetAudioDropped,
       lastLatencyMs: this.lastLatencyMs,
       peakLatencyMs: this.peakLatencyMs,
+      cues: {
+        loaded: this.cuesLoaded,
+        count: this.cueCount,
+        lastSyncErrorMs: this.lastSyncErrorMs,
+        peakSyncErrorMs: this.peakSyncErrorMs,
+        lastPair: this.lastPair,
+        lastPlayedAt: this.lastPlayedAt,
+      },
       errors: [...this.errors],
     };
   }
@@ -103,6 +144,11 @@ export function emptyRelayStats(): RelayStatsSnapshot {
     fleetAudioDropped: 0,
     lastLatencyMs: null,
     peakLatencyMs: null,
+    cues: {
+      loaded: false, count: 0,
+      lastSyncErrorMs: null, peakSyncErrorMs: null,
+      lastPair: null, lastPlayedAt: null,
+    },
     errors: [],
   };
 }
