@@ -16,6 +16,9 @@ services:
       STATUS_PORT: "3000"
       # Preserved for step 1 spike diagnostics.
       SPIKE_PORT: "3000"
+      # Step 3 blind relay: unset by default. Populate in .env to enable.
+      RELAY_SOURCE_CHANNEL_ID: ${RELAY_SOURCE_CHANNEL_ID:-}
+      RELAY_TARGET_CHANNEL_ID: ${RELAY_TARGET_CHANNEL_ID:-}
     volumes:
       # Persistence, host-mounted. Must be writable by uid 1000 (the node user).
       - ./data:/data

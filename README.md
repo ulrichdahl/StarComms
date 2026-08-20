@@ -13,21 +13,22 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 2 of 9** (spec §16): the fleet manager. Step 1 (receive spike) passed.
+**Step 3 of 9** (spec §16): the blind relay. Steps 1 and 2 passed.
 
-The step 2 build brings up N applications in one process, each parked on the
-gateway with the privileged `GUILD_MEMBERS` intent, discord.js resume enabled
-so a network flap does not trigger a rejoin chime. It stands up the full spec
-§11 SQLite schema and runs the boot sweep before the fleet connects, so a
-crash mid-relay in later steps has one place to be recovered from. `/healthz`
-reports per-member state as JSON.
+The step 3 build adds an unconditional audio bridge on top of the fleet:
+bravo joins one voice channel and listens, charlie joins another and
+transmits every non-fleet speaker's opus straight through. No STT, no cues,
+no call-up protocol — the point of this step is to measure the additive
+routing latency, confirm no join chime is emitted between transmissions
+(the connection is held open, silence frames included), and verify §5 fleet
+suppression drops the fleet's own audio *before* it enters the relay path.
 
-The step 2 build does **not** join any voice channels — that is step 3's job.
-"Parked" here means the gateway is up and the client is holding a session, not
-that the bot has moved into a voice channel.
+The step 3 build does **not** implement callsigns, verbs, cues, session
+state, mirror embeds, ducking, or the priority-speaker mute mode.
 
-The step 1 spike (`src/spike/receive.ts`) is kept and still runs via
-`npm run spike` — useful when diagnosing a receive regression.
+Earlier steps are retained: `src/spike/receive.ts` still runs via
+`npm run spike` for DAVE-receive regression diagnosis. Step 2's fleet
+manager is now the base that step 3 sits on.
 
 ## Running the fleet (step 2)
 
@@ -44,7 +45,9 @@ For each application, in the [developer portal](https://discord.com/developers/a
 - Invite each to the same guild with scope `bot` and the base permissions:
 
 ```
-https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot&permissions=1049600
+https://discord.com/oauth2/authorize?client_id=1540029211778220032&scope=bot&permissions=1049600
+https://discord.com/oauth2/authorize?client_id=1540029657183682632&scope=bot&permissions=1049600
+https://discord.com/oauth2/authorize?client_id=1540029933747830844&scope=bot&permissions=1049600
 ```
 
 ### 2. Configure
@@ -69,8 +72,75 @@ curl -s localhost:3000/healthz | jq
 
 Expected: `"verdict": "ok"`, three members with `loggedIn: true`, `status:
 "Ready"`, one `controller: true` (alfa). To exercise resume, bounce a bot's
-gateway (`iptables -I OUTPUT -d discord.com -j DROP` for ~20s, then unblock);
-the log line to look for is `[alfa] resumed session (no rejoin, no chime)`.
+gateway. Inside the container's namespace works even when your host firewall
+does not:
+
+```bash
+docker network disconnect starbridge_default starbridge-bot-1
+sleep 20
+docker network connect starbridge_default starbridge-bot-1
+```
+
+The log line to look for is `[<nato>] resumed session (no rejoin, no
+chime)`. A fresh identify after an expired session is the acceptable
+fallback path.
+
+## Running the blind relay (step 3)
+
+The relay activates when both channel IDs are set. Bravo joins the source and
+listens; charlie joins the target and transmits.
+
+### 1. Two voice channels
+
+Create two voice channels in your Discord guild. Bravo needs `View Channel`
++ `Connect` on the source; charlie needs `View Channel` + `Connect` +
+`Speak` on the target. Base invite permissions (1049600) cover Connect but
+not Speak — grant Speak explicitly or use permission overwrites.
+
+### 2. Add to `.env`
+
+```bash
+RELAY_SOURCE_CHANNEL_ID=...   # channel bravo joins
+RELAY_TARGET_CHANNEL_ID=...   # channel charlie joins
+```
+
+### 3. Run and verify
+
+```bash
+docker compose up --build
+```
+
+Expected log lines:
+
+```
+relay: bravo -> charlie (<source> -> <target>)
+relay: source ready — listening on <source name>
+relay: target ready — transmitting on <target name>
+relay: bridge open
+```
+
+Manual verification bar:
+
+1. Bravo appears in the source channel, charlie in the target.
+2. From a second Discord account, join the source and talk. Have a listener
+   on the target confirm they hear you.
+3. **No join chime between transmissions.** The connection is held open;
+   the "user joined voice" chime should only fire when charlie itself first
+   joined, and never again.
+4. `docker compose exec bot curl -s localhost:3000/healthz | jq .relay`
+   shows `transmissions > 0`, `lastLatencyMs` around 50–200 ms, and
+   `fleetAudioDropped` remains 0 while only humans transmit. It should
+   *increment* if you deliberately have alfa transmit into the source (via
+   another means), proving §5 suppression is active.
+
+### What can go wrong
+
+| Symptom | Likely cause |
+|---|---|
+| `relay: failed to start — ... is not a guild voice channel` | Wrong channel ID, or the bot lacks View Channel there. |
+| Bravo joins, no audio arrives | Source channel has permission overwrites hiding it from bravo. |
+| Charlie joins but nobody hears audio | Charlie lacks Speak on the target — grant it. |
+| Latency > 500 ms consistently | Opus decode path was substituted for the direct forward — check the code around `StreamType.Opus`. |
 
 ## Running the receive spike (step 1)
 
@@ -147,11 +217,13 @@ sudo chown -R 1000:1000 data
 
 ```
 docs/spec.html            the specification — read this first
-src/index.ts              step 2 entrypoint: config → db → sweep → fleet → status
+src/index.ts              entrypoint: config → db → sweep → fleet → relay → status
 src/spike/receive.ts      step 1: decrypted per-SSRC PCM under DAVE (kept)
 src/fleet/manager.ts      one process, N gateway-parked clients
 src/fleet/boot-sweep.ts   crash recovery — runs before the fleet connects
 src/fleet/status.ts       /healthz JSON: per-member verdict
+src/relay/blind.ts        step 3: hardcoded source→target audio bridge
+src/relay/metrics.ts      relay stats + §5 fleet suppression check
 src/lib/config.ts         fleet.yaml + token env resolution
 src/lib/db.ts             SQLite, WAL, full §11 schema
 src/lib/audio.ts          PCM level metering (spike)
@@ -189,6 +261,7 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 
 ## Next
 
-Step 3: blind relay. Hard-coded source/target, raw copy, stream held open with
-silence frames. Measure latency; confirm no runtime chimes and no first-word
-clipping.
+Step 4: cue engine. Pre-encoded Opus assets, duration validation at startup,
+simultaneous playback into source and target so the caller and the receiver
+both hear `Ready` and `Attention` at exactly the same time. Testable with a
+hard-coded call-up before the STT and grammar work of step 6.

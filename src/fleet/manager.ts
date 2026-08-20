@@ -176,6 +176,32 @@ export class Fleet {
 
   isShuttingDown(): boolean { return this.shuttingDown; }
 
+  /**
+   * The Client for a fleet member by NATO name — used by the relay to attach
+   * receive/transmit paths to specific bots (spec §16.3).
+   */
+  clientFor(nato: string): Client {
+    const e = this.bots.find((b) => b.member.nato === nato);
+    if (e === undefined) throw new Error(`no fleet member with nato=${nato}`);
+    return e.client;
+  }
+
+  /**
+   * User IDs of every fleet member that has finished login. Used to drop the
+   * fleet's own audio *before* any detection path — spec §5, the highest-
+   * consequence bug in the product: without this the fleet talks to itself.
+   * A client that has not reached ready has no user yet and is skipped; that
+   * is safe because its audio cannot appear in any voice channel yet either.
+   */
+  botUserIds(): Set<string> {
+    const s = new Set<string>();
+    for (const e of this.bots) {
+      const id = e.client.user?.id;
+      if (id !== undefined) s.add(id);
+    }
+    return s;
+  }
+
   async stop(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
