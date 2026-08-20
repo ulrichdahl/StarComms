@@ -25,6 +25,7 @@ import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
 import { provisionGuild } from './pool/provisioning.js';
 import { closeSession, openSession, SessionError } from './session/lifecycle.js';
 import type { SessionMode } from './session/model.js';
+import { FakeDriver, type SttDriver } from './detection/stt.js';
 
 async function main(): Promise<void> {
   const startedAt = new Date();
@@ -36,6 +37,8 @@ async function main(): Promise<void> {
   const relaySource = optionalEnv('RELAY_SOURCE_CHANNEL_ID', '');
   const relayTarget = optionalEnv('RELAY_TARGET_CHANNEL_ID', '');
   const relayEnabled = relaySource !== '' && relayTarget !== '';
+  const sttDriverName = optionalEnv('STT_DRIVER', 'fake');
+  const sttFakeResponse = optionalEnv('STT_FAKE_RESPONSE', 'command alpha');
 
   console.log(`config: ${configPath}`);
   const config = loadConfig(configPath);
@@ -69,6 +72,16 @@ async function main(): Promise<void> {
   console.log('logging in fleet...');
   await fleet.start();
   console.log('all members ready');
+
+  // STT driver — v1 default is fake so the fleet always boots even without
+  // a Whisper container. Real driver arrives with step 6a·follow-up.
+  let stt: SttDriver | null = null;
+  if (sttDriverName === 'fake') {
+    stt = new FakeDriver(sttFakeResponse);
+    console.log(`stt: driver=fake canned="${sttFakeResponse}"`);
+  } else {
+    console.warn(`stt: driver=${sttDriverName} is not yet wired; detection will be silent`);
+  }
 
   // Slash registrar runs on the controller only (see CLAUDE.md 4-bot layout).
   // Handlers close over fleet, config and db so provisioning has everything it
@@ -113,6 +126,13 @@ async function main(): Promise<void> {
       try {
         const result = await openSession({
           guild, ownerId: interaction.user.id, mode, squads, fleet, db,
+          stt: stt ?? undefined,
+          onDetection: (d) => {
+            console.log(
+              `detection: [${d.userId}] "${d.transcript.text}" ` +
+              `(${d.transcript.durationMs.toFixed(0)} ms, peak=${(20 * Math.log10(d.peakRms || 1e-6)).toFixed(1)} dBFS)`,
+            );
+          },
         });
         const netLines = result.nets.map(
           (n) => `• ${n.callsign} — <#${n.channelId}> (bot: ${n.botKey})`,

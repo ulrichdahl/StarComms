@@ -39,6 +39,8 @@ import {
 } from '@discordjs/voice';
 import type { DB } from '../lib/db.js';
 import type { Fleet } from '../fleet/manager.js';
+import { DetectionListener, type Detection } from '../detection/listener.js';
+import type { SttDriver } from '../detection/stt.js';
 import { netsFor, type NetRole, type NetSpec, type SessionMode, type SessionNet } from './model.js';
 
 export interface OpenResult {
@@ -47,7 +49,21 @@ export interface OpenResult {
   mode: SessionMode;
   ownerId: string;
   nets: SessionNet[];
+  /** Present when an STT driver was supplied — the detection listener on
+   * the primary net. Held so closeSession can tear it down. */
+  detection: DetectionListener | null;
 }
+
+/**
+ * Per-session runtime state. `openSession` returns this via `OpenResult`
+ * and stashes it in a module-scope map keyed by guildId; `closeSession`
+ * looks it up. Kept out of SQLite because it holds live JS handles.
+ */
+interface SessionRuntime {
+  sessionId: number;
+  detection: DetectionListener | null;
+}
+const runtime = new Map<string, SessionRuntime>();
 
 export interface CloseResult {
   sessionId: number;
@@ -67,8 +83,12 @@ export async function openSession(args: {
   squads: number;
   fleet: Fleet;
   db: DB;
+  /** Optional in step 6a — when supplied, detection listens on the primary net. */
+  stt?: SttDriver;
+  /** Callback for every recognised utterance; step 6b routes these into the state machine. */
+  onDetection?: (d: Detection) => void;
 }): Promise<OpenResult> {
-  const { guild, ownerId, mode, squads, fleet, db } = args;
+  const { guild, ownerId, mode, squads, fleet, db, stt, onDetection } = args;
 
   const existing = db.prepare(
     `SELECT id FROM sessions WHERE guild_id = ? AND ended_at IS NULL`,
@@ -219,7 +239,31 @@ export async function openSession(args: {
     }
   }
 
-  return { sessionId, guildId: guild.id, mode, ownerId, nets };
+  // Attach the detection listener to the primary net's VoiceConnection.
+  // Only main's connection carries detection; squad nets are voice out-only
+  // (§5). If no STT driver was supplied, skip — the fleet still opens
+  // fine, just doesn't recognise call-ups yet.
+  let detection: DetectionListener | null = null;
+  if (stt !== undefined && primary !== undefined) {
+    const mainUserId = fleet.controllerClient().user?.id;
+    if (mainUserId !== undefined) {
+      const conn = getVoiceConnection(guild.id, mainUserId) as VoiceConnection | undefined;
+      if (conn !== undefined) {
+        detection = new DetectionListener({
+          connection: conn,
+          stt,
+          fleetUserIds: () => fleet.botUserIds(),
+        });
+        if (onDetection !== undefined) {
+          detection.on('detection', onDetection);
+        }
+        console.log(`session ${sessionId}: detection attached to ${primary.callsign} (stt=${stt.name})`);
+      }
+    }
+  }
+
+  runtime.set(guild.id, { sessionId, detection });
+  return { sessionId, guildId: guild.id, mode, ownerId, nets, detection };
 }
 
 export async function closeSession(args: {
@@ -236,6 +280,14 @@ export async function closeSession(args: {
     throw new SessionError('no session is open in this guild');
   }
   const sessionId = row.id;
+
+  // Tear down detection first so no in-flight utterance tries to route to
+  // channels we are about to delete.
+  const rt = runtime.get(guild.id);
+  if (rt !== undefined) {
+    rt.detection?.stop();
+    runtime.delete(guild.id);
+  }
 
   const netRows = db.prepare(
     `SELECT nato, channel_id, bot_id FROM session_nets WHERE session_id = ?`,
