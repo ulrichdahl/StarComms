@@ -419,10 +419,48 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 - Channels are never renamed (~2 PATCH per 10 min limit).
 - Never `client.destroy()` on transient disconnect — discord.js resumes automatically; destroying forces a fresh join and emits the join chime.
 
+## Running with real Whisper STT (step 6a follow-up)
+
+The fleet defaults to the fake STT driver so it boots without a
+Whisper container. To use real transcription:
+
+```bash
+docker compose --profile stt up --build
+```
+
+That brings up the Speaches sidecar (Faster-Whisper) alongside the bot.
+On CPU it uses `Systran/faster-whisper-tiny` by default — quick to
+warm, English/Danish adequate for short call-ups. Override with:
+
+```
+STT_DRIVER=whisper_local
+STT_URL=http://stt:8000/v1
+STT_MODEL=Systran/faster-whisper-tiny
+STT_LANGUAGE=en
+```
+
+Boot log should show:
+
+```
+stt: driver=whisper_local url=http://stt:8000/v1
+```
+
+If the sidecar isn't reachable at boot the driver logs a warning and
+falls back to fake, so the fleet still comes up. Restart the bot after
+`docker compose --profile stt up stt` finishes downloading the model.
+
+Then during `/star-bridge open` + speaking in the primary channel,
+`detection:` log lines will now carry your actual words instead of
+`"command alpha"`:
+
+```
+detection: [<userId>] "command alpha" (1120 ms, peak=-16.4 dBFS)     ← fake
+detection: [<userId>] "Command Alpha, prepare to move." (1120 ms, …) ← whisper
+```
+
 ## Next
 
-Step 6: call-up protocol. VAD + local Whisper STT on the primary net,
-verb + callsign grammar, callsign matcher against the active session's
-nets, per-net state machine, locks, timers. The blind relay's hardcoded
-bravo→charlie pair is retired here — the router resolves a call-up to a
-target net from the live session table instead.
+Step 6b: verb + callsign grammar, callsign matcher against the active
+session's nets, per-net state machine, locks, timers. Auto-hail: a
+recognised call-up automatically calls the same session relay path that
+`/star-bridge hail` uses today, and the slash command retires.

@@ -26,7 +26,7 @@ import { provisionGuild } from './pool/provisioning.js';
 import { closeSession, detectionFor, openSession, SessionError } from './session/lifecycle.js';
 import type { SessionMode } from './session/model.js';
 import { connectionFor, runSessionRelay } from './session/relay.js';
-import { FakeDriver, type SttDriver } from './detection/stt.js';
+import { FakeDriver, WhisperLocalDriver, type SttDriver } from './detection/stt.js';
 
 async function main(): Promise<void> {
   const startedAt = new Date();
@@ -40,6 +40,9 @@ async function main(): Promise<void> {
   const relayEnabled = relaySource !== '' && relayTarget !== '';
   const sttDriverName = optionalEnv('STT_DRIVER', 'fake');
   const sttFakeResponse = optionalEnv('STT_FAKE_RESPONSE', 'command alpha');
+  const sttUrl = optionalEnv('STT_URL', 'http://stt:8000/v1');
+  const sttModel = optionalEnv('STT_MODEL', '');
+  const sttLanguage = optionalEnv('STT_LANGUAGE', '');
 
   console.log(`config: ${configPath}`);
   const config = loadConfig(configPath);
@@ -75,9 +78,26 @@ async function main(): Promise<void> {
   console.log('all members ready');
 
   // STT driver — v1 default is fake so the fleet always boots even without
-  // a Whisper container. Real driver arrives with step 6a·follow-up.
+  // a Whisper container. whisper_local talks to a Speaches sidecar over
+  // HTTP; if the sidecar is not reachable at boot we log a warning and
+  // fall back to fake, so a misconfigured STT never blocks the fleet from
+  // coming up and running /star-bridge open + hail.
   let stt: SttDriver | null = null;
-  if (sttDriverName === 'fake') {
+  if (sttDriverName === 'whisper_local') {
+    const whisper = new WhisperLocalDriver({
+      url: sttUrl,
+      ...(sttModel !== '' ? { model: sttModel } : {}),
+      ...(sttLanguage !== '' ? { language: sttLanguage } : {}),
+    });
+    const ok = await whisper.ready();
+    if (ok) {
+      stt = whisper;
+      console.log(`stt: driver=whisper_local url=${sttUrl}${sttModel !== '' ? ` model=${sttModel}` : ''}${sttLanguage !== '' ? ` language=${sttLanguage}` : ''}`);
+    } else {
+      console.warn(`stt: driver=whisper_local unreachable at ${sttUrl} — falling back to fake`);
+      stt = new FakeDriver(sttFakeResponse);
+    }
+  } else if (sttDriverName === 'fake') {
     stt = new FakeDriver(sttFakeResponse);
     console.log(`stt: driver=fake canned="${sttFakeResponse}"`);
   } else {

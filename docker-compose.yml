@@ -19,6 +19,14 @@ services:
       # Step 3 blind relay: unset by default. Populate in .env to enable.
       RELAY_SOURCE_CHANNEL_ID: ${RELAY_SOURCE_CHANNEL_ID:-}
       RELAY_TARGET_CHANNEL_ID: ${RELAY_TARGET_CHANNEL_ID:-}
+      # Step 6a STT: point at the stt profile's sidecar. When STT_DRIVER
+      # is 'fake' this is ignored; when 'whisper_local' the bot probes
+      # this URL at boot and falls back to fake if unreachable.
+      STT_DRIVER: ${STT_DRIVER:-fake}
+      STT_FAKE_RESPONSE: ${STT_FAKE_RESPONSE:-command alpha}
+      STT_URL: ${STT_URL:-http://stt:8000/v1}
+      STT_MODEL: ${STT_MODEL:-}
+      STT_LANGUAGE: ${STT_LANGUAGE:-}
     volumes:
       # Persistence, host-mounted. Must be writable by uid 1000 (the node user).
       - ./data:/data
