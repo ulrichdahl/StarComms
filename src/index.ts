@@ -43,6 +43,7 @@ async function main(): Promise<void> {
   const sttUrl = optionalEnv('STT_URL', 'http://stt:8000/v1');
   const sttModel = optionalEnv('STT_MODEL', '');
   const sttLanguage = optionalEnv('STT_LANGUAGE', '');
+  const sttPrompt = optionalEnv('STT_PROMPT', '');
 
   console.log(`config: ${configPath}`);
   const config = loadConfig(configPath);
@@ -88,11 +89,17 @@ async function main(): Promise<void> {
       url: sttUrl,
       ...(sttModel !== '' ? { model: sttModel } : {}),
       ...(sttLanguage !== '' ? { language: sttLanguage } : {}),
+      ...(sttPrompt !== '' ? { prompt: sttPrompt } : {}),
     });
     const ok = await whisper.ready();
     if (ok) {
       stt = whisper;
-      console.log(`stt: driver=whisper_local url=${sttUrl}${sttModel !== '' ? ` model=${sttModel}` : ''}${sttLanguage !== '' ? ` language=${sttLanguage}` : ''}`);
+      console.log(
+        `stt: driver=whisper_local url=${sttUrl}` +
+        (sttModel !== '' ? ` model=${sttModel}` : '') +
+        (sttLanguage !== '' ? ` language=${sttLanguage}` : '') +
+        ` bias="${whisper.prompt.slice(0, 80)}${whisper.prompt.length > 80 ? '…' : ''}"`,
+      );
     } else {
       console.warn(`stt: driver=whisper_local unreachable at ${sttUrl} — falling back to fake`);
       stt = new FakeDriver(sttFakeResponse);

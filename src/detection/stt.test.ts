@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FakeDriver, ScriptedFakeDriver, pcmDurationMs } from './stt.js';
+import { DEFAULT_BIAS_PROMPTS, FakeDriver, ScriptedFakeDriver, WhisperLocalDriver, pcmDurationMs } from './stt.js';
 
 const oneSecondPcm48kMono = (): Buffer => Buffer.alloc(48_000 * 2);
 
@@ -36,6 +36,34 @@ describe('ScriptedFakeDriver', () => {
       texts.push((await d.transcribe(oneSecondPcm48kMono())).text);
     }
     expect(texts).toEqual(['a', 'b', 'a', 'b', 'a']);
+  });
+});
+
+describe('WhisperLocalDriver bias prompt', () => {
+  it('picks the English default when no language is set', () => {
+    const d = new WhisperLocalDriver({ url: 'http://x' });
+    expect(d.prompt).toBe(DEFAULT_BIAS_PROMPTS['en']);
+    expect(d.prompt).toContain('Command');
+    expect(d.prompt).toContain('Alpha');
+    expect(d.prompt).toContain('hail');
+  });
+
+  it('picks the Danish default when language=da', () => {
+    const d = new WhisperLocalDriver({ url: 'http://x', language: 'da' });
+    expect(d.prompt).toBe(DEFAULT_BIAS_PROMPTS['da']);
+    expect(d.prompt).toContain('Kommando');
+    expect(d.prompt).toContain('kald');
+    expect(d.prompt).toContain('slut');
+  });
+
+  it('honours an explicit override', () => {
+    const d = new WhisperLocalDriver({ url: 'http://x', prompt: 'foo bar' });
+    expect(d.prompt).toBe('foo bar');
+  });
+
+  it('falls back to English when the language has no default', () => {
+    const d = new WhisperLocalDriver({ url: 'http://x', language: 'fr' });
+    expect(d.prompt).toBe(DEFAULT_BIAS_PROMPTS['en']);
   });
 });
 

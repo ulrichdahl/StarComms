@@ -27,6 +27,7 @@ services:
       STT_URL: ${STT_URL:-http://stt:8000/v1}
       STT_MODEL: ${STT_MODEL:-}
       STT_LANGUAGE: ${STT_LANGUAGE:-}
+      STT_PROMPT: ${STT_PROMPT:-}
     volumes:
       # Persistence, host-mounted. Must be writable by uid 1000 (the node user).
       - ./data:/data

@@ -99,7 +99,24 @@ export interface WhisperLocalOptions {
   timeoutMs?: number;
   /** Sample rate of incoming PCM. Detection ships 48 kHz mono. */
   sampleRate?: number;
+  /**
+   * Baked-in bias prompt sent with every transcription. Whisper's decoder
+   * is far more likely to emit tokens that appear in the prompt, so
+   * priming with our vocabulary (verbs + callsigns) turns "mandelpa" into
+   * "Command Alpha" for free. Explicit `opts.hint` on a call still wins.
+   * See DEFAULT_BIAS_PROMPTS for language defaults.
+   */
+  prompt?: string;
 }
+
+/**
+ * Per-language biasing prompts. Short, all-vocabulary, no punctuation
+ * (punctuation in the prompt tends to leak into the output).
+ */
+export const DEFAULT_BIAS_PROMPTS: Record<string, string> = {
+  en: 'Command Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima hail command alert broadcast out over Head Ops',
+  da: 'Kommando Alpha Bravo Charlie Delta kald ordre alarm udsend slut over Hovedops',
+};
 
 /**
  * Talks to a Speaches (formerly faster-whisper-server) sidecar over its
@@ -114,6 +131,7 @@ export class WhisperLocalDriver implements SttDriver {
   private readonly language: string;
   private readonly timeoutMs: number;
   private readonly sampleRate: number;
+  private readonly biasPrompt: string;
 
   constructor(opts: WhisperLocalOptions) {
     this.base = opts.url.replace(/\/+$/, '');
@@ -121,7 +139,14 @@ export class WhisperLocalDriver implements SttDriver {
     this.language = opts.language ?? '';
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.sampleRate = opts.sampleRate ?? 48_000;
+    if (opts.prompt !== undefined && opts.prompt !== '') {
+      this.biasPrompt = opts.prompt;
+    } else {
+      this.biasPrompt = DEFAULT_BIAS_PROMPTS[this.language] ?? DEFAULT_BIAS_PROMPTS['en'] ?? '';
+    }
   }
+
+  get prompt(): string { return this.biasPrompt; }
 
   async transcribe(pcm: Buffer, opts?: { hint?: string; language?: string }): Promise<Transcript> {
     const wav = pcmToWav(pcm, { sampleRate: this.sampleRate, channels: 1, bitsPerSample: 16 });
@@ -132,7 +157,8 @@ export class WhisperLocalDriver implements SttDriver {
     form.append('model', this.model);
     if (lang !== '') form.append('language', lang);
     form.append('response_format', 'json');
-    if (opts?.hint !== undefined && opts.hint !== '') form.append('prompt', opts.hint);
+    const prompt = opts?.hint !== undefined && opts.hint !== '' ? opts.hint : this.biasPrompt;
+    if (prompt !== '') form.append('prompt', prompt);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
