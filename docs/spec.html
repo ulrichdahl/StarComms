@@ -167,7 +167,7 @@
     <li>Owner-driven control panel with buttons for rename, lock, member limit, kick, hail opt-in, and hail.</li>
     <li>Per-guild callsign registry: members pre-register a ship name, then opt their currently-owned channel into the hail directory.</li>
     <li>Bidirectional voice bridge between the owner of the hailing channel and the owner of each hailed channel. Owner audio only; crew audio stays local to their own channel.</li>
-    <li><code>Ready</code> / <code>Attention</code> / <code>Ring</code> / <code>Busy</code> / <code>Out</code> cues on channel transitions.</li>
+    <li><code>Ready</code> / <code>Attention</code> / <code>Ring</code> / <code>Busy</code> / <code>End</code> cues on channel transitions.</li>
     <li>Per-channel end button and a 10 s all-quiet auto-close.</li>
     <li>SQLite on host-mounted volume. Compose for dev and prod.</li>
     <li>Interface strings in en + da. No voice model dependency.</li>
@@ -348,8 +348,8 @@
   <p>Two independent close paths:</p>
 
   <ul>
-    <li><strong>Per-channel end button.</strong> Each participating channel's voice-text chat carries an <strong>End hail</strong> button posted at hail open. Any member of that channel who is either the vessel's owner or holds <code>MOVE_MEMBERS</code> may press it. Pressing plays <code>Out</code> in that channel, its bot leaves voice, and the channel drops from the hail. If only one channel remains after a drop, the hail auto-closes on that channel too.</li>
-    <li><strong>10 s all-quiet timer.</strong> Each relay bot tracks whether its channel's owner is currently speaking (via <code>receiver.speaking</code> events, owner user id only). A hail-wide clock records the timestamp of the last owner speech across all channels. When <code>Date.now() − lastSpeech &gt; 10_000</code>, the hail closes on every side: <code>Out</code> cue everywhere, all bots leave.</li>
+    <li><strong>Per-channel end button.</strong> Each participating channel's voice-text chat carries an <strong>End hail</strong> button posted at hail open. Any member of that channel who is either the vessel's owner or holds <code>MOVE_MEMBERS</code> may press it. Pressing plays <code>End</code> in that channel, its bot leaves voice, and the channel drops from the hail. If only one channel remains after a drop, the hail auto-closes on that channel too.</li>
+    <li><strong>10 s all-quiet timer.</strong> Each relay bot tracks whether its channel's owner is currently speaking (via <code>receiver.speaking</code> events, owner user id only). A hail-wide clock records the timestamp of the last owner speech across all channels. When <code>Date.now() − lastSpeech &gt; 10_000</code>, the hail closes on every side: <code>End</code> cue everywhere, all bots leave.</li>
   </ul>
 
   <div class="call">
@@ -374,7 +374,7 @@
       <tr><td><code>Attention</code></td><td>each accepted target channel</td><td>hail open, mirrors <code>Ready</code>'s timing</td></tr>
       <tr><td><code>Ring</code></td><td>target channel</td><td>hail requested against that target. Plays once in unlocked channels; repeats up to 5× at ~4 s intervals in locked channels</td></tr>
       <tr><td><code>Busy</code></td><td>caller's channel</td><td>a target refused (declined, timed out) or no bots free to allocate</td></tr>
-      <tr><td><code>Out</code></td><td>the channel closing</td><td>a per-channel end, or hail-wide auto-close on all channels</td></tr>
+      <tr><td><code>End</code></td><td>the channel closing</td><td>a per-channel end, or hail-wide auto-close on all channels</td></tr>
     </tbody>
   </table></div>
 
@@ -498,7 +498,7 @@ audit(id PK, actor_id, action, target, payload_json, at)
 cue_sets(id PK, guild_id, locale, duration_ms)
 cue_assets(cue_set_id, cue, path, duration_ms, PK(cue_set_id, cue))
                                                     -- cue: ready | attention | ring |
-                                                    --   busy | out</code></pre>
+                                                    --   busy | end</code></pre>
 
   <p>Boot sweep reads three tables before the fleet connects to Discord: <code>active_hails</code> (any row without <code>closed_at</code> is force-closed with reason <code>drain</code>), <code>vessels</code> (any row whose <code>channel_id</code> no longer exists on Discord is marked <code>deleted_at</code>), and <code>hail_registry</code> (any row whose channel no longer exists is dropped). A crash mid-hail leaves stale state; this repairs it before the fleet touches voice.</p>
 
