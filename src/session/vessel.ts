@@ -22,8 +22,9 @@
  */
 
 import {
-  ChannelType, Events, PermissionsBitField,
-  type Client, type Guild, type GuildMember, type VoiceBasedChannel, type VoiceState,
+  ChannelType, Events, OverwriteType, PermissionFlagsBits, PermissionsBitField,
+  type Client, type Guild, type GuildMember, type OverwriteResolvable,
+  type VoiceBasedChannel, type VoiceState,
 } from 'discord.js';
 import type { DB } from '../lib/db.js';
 import type { Fleet } from '../fleet/manager.js';
@@ -118,6 +119,37 @@ async function createVesselFor(
   const parent = trigger?.parentId ?? null;
 
   const name = `🔊 ${member.displayName}`;
+
+  // Explicit per-channel overwrites. Whatever the parent category has
+  // configured, these grants guarantee the controller can post the
+  // welcome + control panel messages, and the owner can see + connect
+  // to their own vessel. The bot can only grant permissions it holds
+  // itself — the controller's invite must include these guild-wide or
+  // the create call will 403.
+  const controllerUserId = cfg.fleet.controllerClient().user?.id;
+  const overwrites: OverwriteResolvable[] = [];
+  if (controllerUserId !== undefined) {
+    overwrites.push({
+      id: controllerUserId,
+      type: OverwriteType.Member,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.ManageChannels,
+      ],
+    });
+  }
+  overwrites.push({
+    id: member.id,
+    type: OverwriteType.Member,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.Connect,
+    ],
+  });
+
   let channel: VoiceBasedChannel;
   try {
     channel = await guild.channels.create({
@@ -125,6 +157,7 @@ async function createVesselFor(
       type: ChannelType.GuildVoice,
       parent: parent ?? undefined,
       reason: `Star Comms: vessel for ${member.user.tag}`,
+      permissionOverwrites: overwrites,
     });
   } catch (err) {
     console.error(`vessel: create failed for ${member.user.tag} in ${guild.id}: ${errMsg(err)}`);
