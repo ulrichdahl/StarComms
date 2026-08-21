@@ -1,4 +1,4 @@
-<title>Star Bridge</title>
+<title>Star Comms</title>
 <link rel="preconnect" href="https://fonts.googleapis.com/">
 <link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin="">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
@@ -108,794 +108,553 @@
   .flow .st.hi { border-color:var(--accent); color:var(--accent-ink); background:var(--accent-wash); }
   .flow .ar { color:var(--ink-3); padding:0 .25rem; }
 
-  .gram { margin:0 0 1rem; display:grid; gap:.35rem; }
-  .gram .row { display:grid; grid-template-columns:6.2rem 1fr; gap:.8rem; align-items:baseline;
-               background:var(--surface); border:1px solid var(--rule-soft); border-left:3px solid var(--rule);
-               padding:.45rem .7rem; border-radius:0 3px 3px 0; }
-  .gram .row.pri { border-left-color:var(--rust); }
-  .gram .row.all { border-left-color:var(--accent); }
-  .gram .row.dir { border-left-color:var(--teal); }
-  .gram .kw { font-family:var(--fd); text-transform:uppercase; font-weight:700; letter-spacing:.1em; font-size:.98rem; color:var(--ink); }
-  .gram .df { font-size:.86rem; color:var(--ink-2); }
-  .gram .df code { font-size:.82em; }
-
   .rule-end { border:none; border-top:1px solid var(--rule); margin:2.6rem 0 0; }
   .foot { padding-top:.9rem; font-size:.8rem; color:var(--ink-3); }
   a:focus-visible, .toc a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:2px; }
   @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
-  @media (max-width:34rem) { .gram .row { grid-template-columns:1fr; gap:.1rem; } h2 { flex-wrap:wrap; gap:.25rem; } }
+  @media (max-width:34rem) { h2 { flex-wrap:wrap; gap:.25rem; } }
 </style>
 
 <div class="bar">
-  <span class="mark">Star<span>●</span>Bridge</span>
-  <span class="meta">Spec draft 0.5 · 2026-08-20</span>
+  <span class="mark">Star<span>●</span>Comms</span>
+  <span class="meta">Spec 1.0 · 2026-08-21</span>
 </div>
 
 <div class="wrap">
 
 <header class="head">
-  <div class="eyebrow">Speech-routed Discord voice relay</div>
-  <h1>Star Bridge</h1>
+  <div class="eyebrow">Click-driven Discord voice-channel bridge</div>
+  <h1>Star Comms</h1>
   <div class="spec">
     <b>Runtime</b> Node 22 / TS · <code>discord.js</code> + <code>@discordjs/voice ^0.19.2</code><br>
-    <b>Fleet</b> N bot tokens, 1 voice connection per token per guild · N = 12 target<br>
+    <b>Fleet</b> N Discord applications, one voice connection per app per guild · v1 ships 4 (1 controller + 3 relays)<br>
     <b>State</b> SQLite (WAL) on host bind mount · <b>Deploy</b> Docker Compose, dev + prod overlays<br>
-    <b>Trigger</b> VAD → STT on call-up only → verb + NATO callsign<br>
-    <b>Protocol</b> call-up → <code>Ready</code> / <code>Attention</code> cues → live raw-audio relay → <code>Out</code><br>
-    <b>Locale</b> en, da
+    <b>Trigger</b> UI buttons and slash commands · <em>no</em> speech recognition anywhere<br>
+    <b>Protocol</b> hail → cue pair → bidirectional relay → per-channel end button or 10 s all-quiet<br>
+    <b>Locale</b> en, da (interface strings only — no voice model dependency)
   </div>
 
   <nav class="toc">
     <a href="#s1"><b>01</b><span>Scope</span></a>
-    <a href="#s2"><b>02</b><span>Fleet &amp; slots</span></a>
-    <a href="#s3"><b>03</b><span>Modes &amp; callsigns</span></a>
-    <a href="#s4"><b>04</b><span>Channel provisioning</span></a>
-    <a href="#s5"><b>05</b><span>Call-up protocol</span></a>
-    <a href="#s6"><b>06</b><span>Relay path</span></a>
-    <a href="#s7"><b>07</b><span>Mirror &amp; acks</span></a>
-    <a href="#s8"><b>08</b><span>Session lifecycle</span></a>
-    <a href="#s9"><b>09</b><span>Admin &amp; licensing</span></a>
-    <a href="#s10"><b>10</b><span>Danish</span></a>
-    <a href="#s11"><b>11</b><span>Schema</span></a>
-    <a href="#s12"><b>12</b><span>Permissions</span></a>
-    <a href="#s13"><b>13</b><span>Deployment</span></a>
-    <a href="#s14"><b>14</b><span>Testing</span></a>
-    <a href="#s15"><b>15</b><span>Risks</span></a>
-    <a href="#s16"><b>16</b><span>Build order</span></a>
-    <a href="#s17"><b>17</b><span>Open questions</span></a>
-    <a href="#s18"><b>18</b><span>Future work</span></a>
+    <a href="#s2"><b>02</b><span>Fleet</span></a>
+    <a href="#s3"><b>03</b><span>Vessels</span></a>
+    <a href="#s4"><b>04</b><span>Control panel</span></a>
+    <a href="#s5"><b>05</b><span>Callsigns</span></a>
+    <a href="#s6"><b>06</b><span>Hail</span></a>
+    <a href="#s7"><b>07</b><span>Cues</span></a>
+    <a href="#s8"><b>08</b><span>Audio path</span></a>
+    <a href="#s9"><b>09</b><span>Admin</span></a>
+    <a href="#s10"><b>10</b><span>Schema</span></a>
+    <a href="#s11"><b>11</b><span>Permissions</span></a>
+    <a href="#s12"><b>12</b><span>Deployment</span></a>
+    <a href="#s13"><b>13</b><span>Testing</span></a>
+    <a href="#s14"><b>14</b><span>Risks</span></a>
+    <a href="#s15"><b>15</b><span>Build order</span></a>
+    <a href="#s16"><b>16</b><span>Future work</span></a>
   </nav>
 </header>
 
 <section id="s1">
   <h2><b>01</b> Scope</h2>
+
+  <p><em>Star Comms</em> is a Discord bot fleet that opens brief, cue-signalled voice-to-voice bridges between separate voice channels in one guild. It is aimed at slow-tempo cooperative play — industrial gameplay, exploration, coordination between wings, station comms — where the participants sit in their own channels and occasionally need to talk to another channel's owner without either party leaving their own voice channel.</p>
+
+  <p>This is <strong>Spec 1.0</strong>, a rewrite of the earlier draft 0.5 which targeted a speech-recognised battle-comms product. Real-world STT quality against gaming-grade microphones and background audio proved inadequate for reliable routing (see §14). The design was pivoted to <em>click-driven hailing</em>: a channel owner presses a button, the bot picks a target from a directory of hailable channels, and audio flows both ways for as long as anyone talks.</p>
+
   <h4>In</h4>
   <ul>
-    <li>Multi-guild service, one hosted fleet, licensed per guild from an owner-only admin surface.</li>
-    <li>Two session structures: command &amp; squads, joint operations.</li>
-    <li>Four spoken verbs: <code>alert</code>, <code>broadcast</code>, <code>hail</code>, <code>command</code>.</li>
-    <li>Raw-audio relay. Optional attenuation or hard mute of others during relay, per guild.</li>
-    <li>Text mirror per transmission, ack button, ack reflected as reaction on source net.</li>
-    <li><code>/star-bridge</code> self-service setup, auto teardown, transferable fleet lead.</li>
-    <li>Squad leads: commander-assigned, one per net, announced by voice. The lead is the squad's only reply channel (§8).</li>
-    <li>Button-gated voice replies, squad → command. No speech detection on squad nets (§5).</li>
+    <li>Per-user voice channels created via a server-conventional <em>join-to-create</em> lobby.</li>
+    <li>Owner-driven control panel with buttons for rename, lock, member limit, kick, hail opt-in, and hail.</li>
+    <li>Per-guild callsign registry: members pre-register a ship name, then opt their currently-owned channel into the hail directory.</li>
+    <li>Bidirectional voice bridge between the owner of the hailing channel and the owner of each hailed channel. Owner audio only; crew audio stays local to their own channel.</li>
+    <li><code>Ready</code> / <code>Attention</code> / <code>Ring</code> / <code>Busy</code> / <code>Out</code> cues on channel transitions.</li>
+    <li>Per-channel end button and a 10 s all-quiet auto-close.</li>
     <li>SQLite on host-mounted volume. Compose for dev and prod.</li>
-    <li>en + da trigger detection.</li>
+    <li>Interface strings in en + da. No voice model dependency.</li>
   </ul>
+
   <h4>Out</h4>
   <ul>
-    <li>Audio recording or archival. Transcripts persist; audio never touches disk.</li>
-    <li>TTS <em>in the relay path</em> — the relay copies audio. TTS is used only for spoken announcements (§5).</li>
-    <li>Billing. Cross-guild relay within one session.</li>
+    <li>Speech recognition anywhere in the pipeline. No STT, no VAD, no wake-word.</li>
+    <li>Audio recording or archival. No audio touches disk.</li>
+    <li>Persistent voice channels not created via the join-to-create trigger — Star Comms does not manage the guild's static voice layout.</li>
+    <li>Cross-guild bridges within one hail.</li>
+    <li>Text mirror / transcript of a hail. There is no transcript because there is no transcriber.</li>
   </ul>
+
   <div class="call">
-    <span class="lab">Blocking acceptance criterion</span>
-    <p>Listener posts a relay-and-transcription notice in the command net chat on join, listing reachable channels. No audio persistence. GDPR + Discord ToS.</p>
-    <p>Squad nets are <code>selfDeaf</code> and receive nothing except while their lead has an open reply, where only the lead's stream is subscribed and nothing is transcribed. The squad net notice must say exactly this — “deaf unless your lead is replying” is a stronger and more honest claim than “we discard what we hear”, and the design earns it.</p>
+    <span class="lab">What replaces the transcript</span>
+    <p>An audit record per hail — who called whom, when, duration, participating channel ids. Text log only; no audio.</p>
   </div>
 </section>
 
 <section id="s2">
-  <h2><b>02</b> Fleet &amp; slots</h2>
-  <p>One voice connection per bot user per guild — hard Discord limit, <a href="https://github.com/discord/discord-api-docs/discussions/5529">open and unanswered since Oct 2022</a>. Fleet = N applications, N tokens, one process.</p>
-  <div class="call">
-    <span class="lab">The limit is per guild</span>
-    <p>One token holds one connection in <em>every</em> guild concurrently. N=12 serves 12 nets <em>per guild</em>, not 12 total. Fleet size caps nets-per-guild; guild count is unbounded.</p>
-  </div>
+  <h2><b>02</b> Fleet</h2>
+
+  <p>One voice connection per bot user per guild — hard Discord limit, <a href="https://github.com/discord/discord-api-docs/discussions/5529">open and unanswered since Oct 2022</a>. Star Comms is N Discord applications, N tokens, one process.</p>
+
+  <p>Since a hail requires <em>one bot in each participating channel</em>, N caps how many channels can be simultaneously involved in hails at the same time in one guild:</p>
 
   <div class="tw"><table>
-    <thead><tr><th>Quantity</th><th>Value</th><th>Note</th></tr></thead>
+    <thead><tr><th>Fleet</th><th>Concurrent channels-in-hail</th><th>Example configurations</th></tr></thead>
     <tbody>
-      <tr><td>Fleet size N</td><td class="num">12</td><td>Alfa–Lima</td></tr>
-      <tr><td>Max nets in one guild</td><td class="num">N</td><td>Summed across all concurrent sessions in that guild</td></tr>
-      <tr><td>Per-guild quota</td><td class="num">≤ N</td><td>Admin policy value; what the wizard offers</td></tr>
-      <tr><td>Guilds served</td><td class="num">unbounded</td><td>Until 2,500-guild shard threshold</td></tr>
+      <tr><td class="num">2</td><td class="num">2</td><td>One 2-way hail</td></tr>
+      <tr><td class="num">3</td><td class="num">3</td><td>One 3-way, or a 2-way + a leftover</td></tr>
+      <tr><td class="num">4</td><td class="num">4</td><td>Two 2-way hails, or one 4-way</td></tr>
     </tbody>
   </table></div>
 
-  <p>Member <em>k</em> is named for callsign <em>k</em> (<code>Star Bridge Alfa</code>…) and always occupies that callsign's channel — member list doubles as the net map. Member <code>Alfa</code> is <strong>controller</strong>: sole slash-command registrant, sole holder of channel-management permissions.</p>
-  <p>Wizard offers only currently-free slots and names the holder when exhausted.</p>
+  <p>v1 ships with <strong>4 applications</strong>: one <em>controller</em> which registers slash commands and holds channel-management permissions, and three <em>relays</em> allocated to voice channels as hails require. The controller never joins voice in v1 (upgrade path is trivial: make it pool-eligible when a 4th concurrent channel is needed).</p>
 
   <div class="call risk">
     <span class="lab">Provisioning is manual</span>
-    <p>No API creates Discord applications. N members = N hand-registered apps + N privileged <code>GUILD_MEMBERS</code> toggles. Tokens are shown once. Build against N=3.</p>
+    <p>No Discord API creates applications. Each app is hand-registered in the developer portal with the SERVER MEMBERS privileged intent enabled. Tokens are shown once.</p>
+  </div>
+
+  <p>Bots are permanent Discord identities but transient voice-channel occupants: they connect their gateway on process start, log in, and stay parked <em>outside</em> voice until allocated to a hail leg. On hail close they leave voice. This is opposite to the older draft 0.5 design where bots sat in voice channels all the time; here voice-join is a per-hail event.</p>
+
+  <div class="call">
+    <span class="lab">Join chime is acceptable</span>
+    <p>Discord's client plays a join chime when a bot enters a voice channel. In slow-tempo comms this is fine — hails are minutes apart, not seconds — and the chime is a useful audible cue that a hail is opening even before the <code>Ring</code>/<code>Attention</code> cue plays. Session-resume tricks used in the earlier design are unnecessary.</p>
   </div>
 </section>
 
 <section id="s3">
-  <h2><b>03</b> Modes &amp; callsigns</h2>
-  <div class="tw"><table>
-    <thead><tr><th>Mode</th><th>Nets</th><th>Bot roles</th><th>Verbs</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Command &amp; squads</strong></td><td>1 command + <em>x</em> squads</td><td>Command: recv + send. Squads: send only, <code>selfDeaf</code> — undeafened only while their lead has an open reply (§6)</td><td><code>command</code>, <code>alert</code>, <code>broadcast</code>, <code>hail</code></td></tr>
-      <tr><td><strong>Joint operations</strong></td><td><em>x</em> ops nets</td><td>All: recv + send</td><td><code>hail</code>, <code>alert</code>, <code>broadcast</code>. No <code>command</code> — no squad nets exist</td></tr>
-    </tbody>
-  </table></div>
-  <p><code>selfMute</code> is never set: the command net bot must transmit the <code>Ready</code> cue (§5). <code>selfDeaf</code> on squad nets, lifted transiently for a lead's reply.</p>
-  <p>Squad leads are a <strong>command &amp; squads</strong> concept. Joint operations nets already receive and send, so every net can hail on its own account and needs no designated reply channel.</p>
+  <h2><b>03</b> Vessels</h2>
 
-  <h3>Callsign namespace</h3>
-  <p><strong>Flat per guild</strong>, allocated in order across all concurrent sessions. Command nets take letters first. Required for <code>hail</code> to resolve to exactly one channel regardless of which session owns it.</p>
-  <div class="call open">
-    <span class="lab">Alternative</span>
-    <p>Per-session namespace (every session's squads restart at Bravo) makes <code>hail</code> ambiguous once two sessions coexist. Flat is specified. Confirm.</p>
-  </div>
-  <p>NATO set is locale-invariant and contains no <em>æ/ø/å</em> — no callsign localisation needed.</p>
+  <p>Star Comms does <em>not</em> create a category and does <em>not</em> pre-create any voice channels. It relies on the guild's existing <em>join-to-create</em> convention — a well-known voice channel that any member can join to be automatically moved into a fresh channel of their own. Many game-community servers already have this configured; Star Comms plugs into the operator's existing one.</p>
+
+  <h3>Setup</h3>
+
+  <p><code>/star-comms init</code> presents the invoker with a select menu of the guild's voice channels. The invoker picks the join-to-create trigger, and the id is stored in <code>guilds.join_to_create_channel_id</code>. No channels are created by init. Re-running <code>/star-comms init</code> replaces the stored id.</p>
+
+  <h3>Vessel channel creation</h3>
+
+  <p>Star Comms listens for <code>voiceStateUpdate</code>. When a member joins the guild's configured join-to-create channel:</p>
+
+  <ol>
+    <li>The controller creates a new voice channel. Default name is <code>🔊 [display name]</code>. Parent is the join-to-create channel's parent category (so vessels appear next to the trigger, in whatever category the operator's convention channel lives in — Star Comms does not manage the category itself).</li>
+    <li>The controller <code>MOVE_MEMBERS</code>' the member into the new channel.</li>
+    <li>A row is inserted into <code>vessels</code> with the channel id, owner user id, guild id, and creation time.</li>
+    <li>The bot posts the control panel message in the vessel channel's built-in voice-text chat (see §4).</li>
+  </ol>
+
+  <p>Vessels are automatically deleted when they go empty (no members present) — standard join-to-create behaviour. When a vessel is deleted, any active hail leg it belongs to closes for that leg (§6).</p>
+
+  <h3>Owner leaves</h3>
+
+  <p>When the vessel's current owner leaves the vessel channel:</p>
+
+  <ul>
+    <li>Their <code>hail_registry</code> row (if any) is dropped — the channel is no longer discoverable in the hail directory.</li>
+    <li>The controller attempts to rename the channel <code>🛰️ …</code> → <code>🔊 …</code>. If Discord's rename PATCH rate limit refuses, the visual stays; the channel is no longer registered in either case.</li>
+    <li>Any hail leg the vessel was part of is closed as if the owner had pressed <code>[End hail]</code> (§6).</li>
+    <li>Remaining members in the vessel can continue talking as they would in any Discord voice channel. When the channel empties, standard join-to-create cleanup deletes it.</li>
+  </ul>
+
+  <p>There is no "transfer ownership" concept in v1. If a channel is empty of its owner, it is functionally an ordinary voice channel until it empties and is deleted.</p>
 </section>
 
 <section id="s4">
-  <h2><b>04</b> Channel provisioning</h2>
-  <div class="call">
-    <span class="lab">Superseded 20 Aug 2026 — see §17 #4 and CLAUDE.md</span>
-    <p>The "hidden pool of N voice channels revealed by overwrites" model
-      below is <strong>no longer the v1 design</strong>. v1 creates only a
-      category and a single <code>star-bridge-ops</code> control text channel
-      at <code>/star-bridge init</code>. Voice channels are created per
-      session in the mode's callsigns (Command / Alpha / Bravo / Charlie, or
-      Head&nbsp;Ops / Alpha&nbsp;Ops / …) and deleted at teardown. The
-      original rationale — avoiding Discord's ~2 rename per 10 min PATCH
-      limit — still stands (channels are never renamed by the bot), but
-      per-session create/delete uses a looser rate bucket and gives a cleaner
-      sidebar than a permanent, revealed-and-hidden pool.</p>
-  </div>
-  <div class="call risk">
-    <span class="lab">Rate limit that kills the naive design</span>
-    <p>Channel <code>name</code>/<code>topic</code> PATCH is limited to <strong>~2 per 10 min per channel</strong> — long undocumented, <a href="https://github.com/discord/discord-api-docs/issues/1900">repeatedly reported</a>. Never rename a channel to repurpose it. Create/delete churn per session also burns route buckets for nothing.</p>
-  </div>
+  <h2><b>04</b> Control panel</h2>
 
-  <p><strong>Hidden pool.</strong> On licensing: create category <code>STAR BRIDGE</code> + N voice channels named per callsign + 1 text channel. Created once, named once, never renamed. Sessions reveal/hide via <code>@everyone</code> overwrites on <code>VIEW_CHANNEL</code> + <code>CONNECT</code>. User-visible behaviour is identical to create/delete.</p>
+  <p>Posted automatically in the vessel's voice-text chat immediately after the owner is moved in. Content is a mention of the owner plus a two-row action bar of buttons:</p>
 
   <div class="tw"><table>
-    <thead><tr><th>Event</th><th>Action</th><th>Cost</th></tr></thead>
+    <thead><tr><th>Button</th><th>Effect</th></tr></thead>
     <tbody>
-      <tr><td>Guild licensed</td><td>Create category + N voice + 1 text, all denied</td><td class="num">once/guild</td></tr>
-      <tr><td>Session start</td><td>Allow overwrites on session nets; fleet joins</td><td class="num">1 PATCH/net</td></tr>
-      <tr><td>Session end</td><td>Move stragglers out, deny overwrites, fleet leaves</td><td class="num">1 PATCH/net</td></tr>
-      <tr><td>Guild unlicensed</td><td>Delete category + channels</td><td class="num">once/guild</td></tr>
+      <tr><td><strong>Rename</strong></td><td>Opens a modal with a text input. On submit, PATCH the channel name.</td></tr>
+      <tr><td><strong>Lock</strong> / <strong>Unlock</strong></td><td>Toggle. Locked adds a permission overwrite denying <code>CONNECT</code> to <code>@everyone</code>. Existing members are unaffected.</td></tr>
+      <tr><td><strong>Limit</strong></td><td>Opens a modal with a numeric input. Sets <code>user_limit</code> on the channel. 0 disables the limit.</td></tr>
+      <tr><td><strong>Kick</strong></td><td>Opens a member-select from the channel's current members. Disconnects the selected member from voice.</td></tr>
+      <tr><td><strong>Allow hails</strong> / <strong>Disable hails</strong></td><td>Requires the owner to be pre-registered (§5). Allow adds a row to <code>hail_registry</code> and renames the channel <code>🔊 …</code> → <code>🛰️ [callsign]</code>. Disable removes the registry row and leaves the visual as is.</td></tr>
+      <tr><td><strong>Hail</strong></td><td>Requires the owner's own channel to have hails enabled. Opens a channel-select populated from <code>hail_registry</code> (excluding self). See §6.</td></tr>
     </tbody>
   </table></div>
 
-  <p>Side effects: fleet may stay parked across sessions in a busy guild (join chime is client-side, unsuppressable — only remedy is not rejoining); a crash leaks a stale overwrite, not an orphaned channel. Boot sweep repairs.</p>
+  <p>Every button handler validates that the interaction's user is the vessel's current owner (join row in <code>vessels</code>). Non-owner clicks respond with an ephemeral <em>"Only the channel owner can use these controls."</em></p>
+
+  <div class="call">
+    <span class="lab">Rate-limited actions</span>
+    <p>Channel <code>name</code> / <code>topic</code> PATCH is capped at ~2 per 10 min per channel. On a rate-limited response Star Comms replies to the button click ephemerally with <em>"Discord's rename limit for this channel is reached. Try again in ~10 minutes."</em> — no queueing, no retry loop.</p>
+  </div>
+
+  <p>The control panel message is not ephemeral (Discord ephemerals require an existing interaction to reply to, and vessel creation is triggered by <code>voiceStateUpdate</code>, not by a slash command). It remains in the voice-text chat's history for future channel members, which is acceptable — the buttons enforce owner-only access, and non-owners see the channel status but cannot change it.</p>
 </section>
 
 <section id="s5">
-  <h2><b>05</b> Call-up protocol</h2>
-  <p>A transmission is two utterances, not one. <strong>Call-up</strong> (verb + callsign) opens the net; the bot confirms with <code>Ready</code> to the caller and <code>Attention</code> to the targets; the <strong>message</strong> then relays live. Routing is resolved before the message exists.</p>
+  <h2><b>05</b> Callsigns</h2>
 
-  <div class="gram">
-    <div class="row pri"><span class="kw">Alert</span><span class="df">no callsign → all session nets. Preempts an open net. Target cue = <code>Horn</code>.</span></div>
-    <div class="row all"><span class="kw">Broadcast</span><span class="df">no callsign → all session nets. Respects busy nets, skips them.</span></div>
-    <div class="row dir"><span class="kw">Hail</span><span class="df"><code>&lt;callsign&gt;</code> → another command/ops net, guild-wide.</span></div>
-    <div class="row dir"><span class="kw">Command</span><span class="df"><code>&lt;callsign&gt;</code> → one squad net in session.</span></div>
-  </div>
+  <p>Callsigns are guild-scoped, unique per guild, one per member. They are the ship name a member wants displayed on their vessel and shown in other members' hail directories.</p>
 
-  <h3>State machine, per source net</h3>
-  <div class="flow">
-    <span class="st">IDLE</span><span class="ar">→</span>
-    <span class="st hi">call-up recognised, lock acquired</span><span class="ar">→</span>
-    <span class="st">OPENING</span><span class="ar">→</span>
-    <span class="st hi">cues played, D<sub>c</sub></span><span class="ar">→</span>
-    <span class="st">OPEN</span><span class="ar">→</span>
-    <span class="st hi">silence / <code>out</code> / max hold</span><span class="ar">→</span>
-    <span class="st">CLOSING</span><span class="ar">→</span>
-    <span class="st">IDLE</span>
-  </div>
-
-  <div class="tw"><table>
-    <thead><tr><th>t</th><th>Source net</th><th>Target net(s)</th></tr></thead>
-    <tbody>
-      <tr><td><code>0</code></td><td>caller: “Command Charlie”</td><td>—</td></tr>
-      <tr><td><code>+0.3–0.7s</code></td><td>dead air (VAD + STT + lock)</td><td>—</td></tr>
-      <tr><td><code>open</code></td><td>cue <code>Ready</code>, duration D<sub>c</sub></td><td>cue <code>Attention</code> or <code>Horn</code>, duration D<sub>c</sub>. Ducking engages</td></tr>
-      <tr><td><code>open+D<sub>c</sub></code></td><td>caller speaks</td><td><strong>live relay, no added delay</strong></td></tr>
-      <tr><td><code>close</code></td><td>cue <code>Out</code></td><td>cue <code>Out</code>. Ducking releases</td></tr>
-    </tbody>
-  </table></div>
-
-  <div class="call">
-    <span class="lab">Why the cues must be duration-matched</span>
-    <p><code>Ready</code> and <code>Attention</code>/<code>Horn</code> start on the same instant and are normalised to the same length D<sub>c</sub>, so the caller's go-ahead and the receivers' alert end together. The first word of the message therefore cannot land while a receiver is still hearing a cue. Startup validates that every cue asset in a set matches D<sub>c</sub> and <strong>fails loudly</strong> if not — a mismatch silently clips first words.</p>
-  </div>
-
-  <h3>Cue set</h3>
-  <div class="tw"><table>
-    <thead><tr><th>Cue</th><th>Plays in</th><th>Trigger</th><th>Asset</th></tr></thead>
-    <tbody>
-      <tr><td><code>Ready</code></td><td>source</td><td>net open, route resolved</td><td>voice, per-locale</td></tr>
-      <tr><td><code>Attention</code></td><td>target(s)</td><td>net open, verb = hail / command / broadcast</td><td>voice, per-locale</td></tr>
-      <tr><td><code>Horn</code></td><td>target(s)</td><td>net open, verb = alert</td><td>SFX, locale-neutral, length == <code>Attention</code></td></tr>
-      <tr><td><code>Negative</code></td><td>source</td><td>callsign unmatched, or no route</td><td>voice, per-locale</td></tr>
-      <tr><td><code>Busy</code></td><td>source</td><td>target held by another session</td><td>voice, per-locale</td></tr>
-      <tr><td><code>Out</code></td><td>both</td><td>net closed</td><td>tone, locale-neutral</td></tr>
-    </tbody>
-  </table></div>
-  <p>Cue sets are per guild: shipped defaults (en, da) or operator-supplied WAVs. All assets pre-encoded to Opus frames and cached in memory at startup — no <code>ffmpeg</code> spawn per cue, constant playback latency. Prepend ~200 ms silence pre-roll to every asset (§6).</p>
-
-  <h3>Announcements</h3>
-  <p>Distinct from cues, and the reason TTS is in the runtime at all. One exists in v1: squad lead promotion (§8).</p>
-  <div class="tw"><table>
-    <thead><tr><th></th><th>Cue</th><th>Announcement</th></tr></thead>
-    <tbody>
-      <tr><td>Content</td><td>fixed phrase</td><td>carries a member name</td></tr>
-      <tr><td>Length</td><td>normalised to D<sub>c</sub></td><td>variable — nothing races it, so no equal-duration constraint</td></tr>
-      <tr><td>Generation</td><td>pre-encoded at startup</td><td>TTS on promotion, cached in memory per (locale, spoken name)</td></tr>
-      <tr><td>Timing</td><td>net open / close</td><td>queued behind an open net</td></tr>
-    </tbody>
-  </table></div>
-
-  <div class="call risk">
-    <span class="lab">Announcements cannot be localised per listener</span>
-    <p>A bot transmits one stream into a channel; Discord has no per-member audio. The announcement is rendered <strong>once, in the session locale</strong>, and everyone in the net hears that language. The accompanying text line is one message, so the same applies. Per-listener language is not achievable and must not be promised.</p>
-  </div>
+  <h3>Slash commands</h3>
 
   <ul>
-    <li><strong>Never played over an open net.</strong> If the target is <code>OPEN</code>, queue until <code>CLOSING</code>. If the wait exceeds <code>max_hold_ms</code>, drop the audio and keep the text line — a promotion announcement landing on top of an order is worse than a silent promotion.</li>
-    <li>TTS sits behind a driver interface, same shape as STT: <code>piper_local</code> default, <code>fake</code> for CI.</li>
-    <li><strong>Names are arbitrary user strings.</strong> Resolution order: per-guild <code>spoken_names</code> override → sanitised display name (strip emoji, zero-width, out-of-locale scripts, collapse whitespace) → if nothing speakable remains, play the fixed <code>lead_assigned</code> cue with no name. The text line always shows the real display name.</li>
-    <li>Synthesised audio is cached in memory, never written to disk — the no-audio-on-disk rule (§1) stays absolute.</li>
+    <li><code>/star-comms register &lt;callsign&gt;</code> — registers or replaces the invoker's callsign in this guild. Rejected if the callsign is already registered by someone else in this guild.</li>
+    <li><code>/star-comms unregister</code> — removes the invoker's callsign. If the invoker currently owns a hail-enabled vessel, the vessel's <code>hail_registry</code> row is dropped as a side effect.</li>
+    <li><code>/star-comms callsign</code> — reports the invoker's current callsign, or "not registered" plus a one-line prompt to <code>/star-comms register</code>.</li>
   </ul>
 
-  <h3>Timers</h3>
-  <div class="tw"><table>
-    <thead><tr><th>Setting</th><th>Default</th><th>Effect</th></tr></thead>
-    <tbody>
-      <tr><td><code>cue_duration_ms</code> (D<sub>c</sub>)</td><td class="num">1200</td><td>All cue assets normalised/padded to this length</td></tr>
-      <tr><td><code>open_timeout_ms</code></td><td class="num">5000</td><td><code>Ready</code> played, caller says nothing → close with <code>Out</code></td></tr>
-      <tr><td><code>silence_close_ms</code></td><td class="num">2000</td><td>Speech ended → close</td></tr>
-      <tr><td><code>max_hold_ms</code></td><td class="num">60000</td><td>Hard cap. Close regardless of activity</td></tr>
-    </tbody>
-  </table></div>
-  <p>Immediate close on the terminator verb: <code>out</code> / <code>slut</code>.</p>
-
-  <h3>Collision</h3>
-  <p>One lock per target net. <code>hail</code> / <code>command</code> / <code>broadcast</code> against a held net → <code>Busy</code> cue to the caller, target untouched; for <code>broadcast</code> the held nets are skipped and named in the mirror embed. <code>alert</code> <strong>preempts</strong>: the holding relay is closed with <code>Out</code> and the alert takes the net. Mixing two callers into one net is never done.</p>
-
-  <h3>Reply path, squad → command</h3>
-  <p>A squad's lead can answer the commander by voice. The reply is <strong>button-gated, never speech-detected</strong>: the lead presses <strong>Reply</strong> on the order embed, and the reverse net opens without any recognition step.</p>
+  <p>Callsigns are stored in the <code>callsigns</code> table (§10). Renaming a callsign does <em>not</em> auto-rename any existing vessel channel — respecting the ~2 PATCH per 10 min rename bucket. The new callsign will apply the next time the owner clicks <strong>Allow hails</strong>.</p>
 
   <div class="call">
-    <span class="lab">Receiving is not detecting</span>
-    <p>This is what keeps question 7 from being expensive. The bot already knows who is replying and where the reply goes, so there is no call-up to recognise and <strong>no STT on squad nets at all</strong>. Recognition cost stays proportional to command nets, not to total nets. A button is also a better push-to-talk than a spoken call-up when the lead is already under fire.</p>
+    <span class="lab">Why registration is separate from vessel creation</span>
+    <p>Two reasons. First, it decouples <em>identity</em> from <em>a specific channel</em> — a member can register once and go through many vessels over time without re-typing. Second, the vessel-creation flow is triggered by joining a voice channel, which is a bad moment for a modal (the member has already committed to the join, no room to prompt for text input). Registering ahead of time keeps the vessel-creation path silent and instantaneous.</p>
   </div>
-
-  <div class="tw"><table>
-    <thead><tr><th>t</th><th>Squad net</th><th>Command net</th></tr></thead>
-    <tbody>
-      <tr><td><code>0</code></td><td>lead presses <strong>Reply</strong></td><td>—</td></tr>
-      <tr><td><code>open</code></td><td>undeafen, cue <code>Ready</code> (D<sub>c</sub>)</td><td>cue <code>Attention</code> (D<sub>c</sub>). Ducking engages</td></tr>
-      <tr><td><code>open+D<sub>c</sub></code></td><td>lead speaks — squadmates hear them natively, in the room</td><td>live relay of the lead's stream only</td></tr>
-      <tr><td><code>close</code></td><td>cue <code>Out</code>, re-deafen</td><td>cue <code>Out</code>. Ducking releases</td></tr>
-    </tbody>
-  </table></div>
-
-  <ul>
-    <li><strong>Only the lead's SSRC is subscribed.</strong> Everyone else in the squad net is discarded unread, so a reply carries one voice rather than the whole room.</li>
-    <li>Target is unambiguous — the net that sent the order — so a reply needs no verb and no callsign.</li>
-    <li>Same lock, cues, and timers as a forward transmission. Commander already transmitting → <code>Busy</code> cue to the lead; no queueing, since the lead can hear that the net is in use.</li>
-    <li>No new cue assets. <code>Ready</code>, <code>Attention</code> and <code>Out</code> are reused with source and target swapped.</li>
-    <li>A <strong>text reply</strong> is offered alongside, for a lead who cannot speak. It posts into command/ops tagged with the squad callsign and is stored as a reply with no audio.</li>
-  </ul>
-
-  <h3>Detection</h3>
-  <div class="flow">
-    <span class="st">Opus RTP /SSRC</span><span class="ar">→</span>
-    <span class="st">decode</span><span class="ar">→</span>
-    <span class="st">48k st → 16k mono</span><span class="ar">→</span>
-    <span class="st hi">VAD (silero)</span><span class="ar">→</span>
-    <span class="st hi">STT on call-up utterance</span><span class="ar">→</span>
-    <span class="st hi">parse verb + callsign</span><span class="ar">→</span>
-    <span class="st">lock + open</span>
-  </div>
-  <p>Per-SSRC, SSRC→user_id mapped, so every transmission is attributed. Detection runs only in state <code>IDLE</code>; while a net is <code>OPEN</code> the source audio is relayed, not parsed.</p>
-
-  <div class="call risk">
-    <span class="lab">Fleet SSRC suppression — highest-consequence bug available</span>
-    <p>Joint ops: every net has a listener, so cues and relayed audio land in listening channels. Unguarded, an <code>Attention</code> cue or a relayed call-up re-triggers detection. <strong>Drop all audio from fleet user IDs before detection, unconditionally, both modes.</strong> Assert in unit tests.</p>
-  </div>
-
-  <p>Trigger authority: fleet lead + optional configured role. Others are audible locally, cannot open a net.</p>
-
-  <h3>Callsign matching</h3>
-  <ol>
-    <li>Normalised exact match on active callsigns.</li>
-    <li>Normalised Levenshtein, tight threshold, restricted to callsigns <em>currently allocated in this guild</em> (≤12 candidates).</li>
-    <li><code>alias_variants</code> lookup — per-guild learned misrecognitions.</li>
-  </ol>
-  <p>No match → <code>Negative</code> cue in the source net, no lock taken, plus an ephemeral <em>heard “charly”</em> with one click to record as a variant. The caller gets audible confirmation of failure rather than talking into a void. Never guess a route.</p>
-  <p>Double-metaphone is deliberately excluded — English-orthography-tuned, poor fit for Danish STT output. Layers 2–3 are phonetics-free.</p>
 </section>
 
 <section id="s6">
-  <h2><b>06</b> Relay path</h2>
-  <p>Once a net is <code>OPEN</code>, source PCM is copied to the target stream as it arrives. No buffering, no catch-up, no partial-transcript race — the route was resolved before the message was spoken.</p>
+  <h2><b>06</b> Hail</h2>
 
-  <h3>Latency</h3>
-  <div class="tw"><table>
-    <thead><tr><th>Stage</th><th>Budget</th><th>Note</th></tr></thead>
-    <tbody>
-      <tr><td>VAD segment end (call-up)</td><td class="num">~100 ms</td><td>silero</td></tr>
-      <tr><td>STT on a ~1 s call-up</td><td class="num">200–600 ms</td><td>Local GPU, small model, hotword-biased</td></tr>
-      <tr><td>Lock + open streams</td><td class="num">&lt;50 ms</td><td>In-process, fleet parked</td></tr>
-      <tr><td>Cue playback D<sub>c</sub></td><td class="num">1200 ms</td><td>Hides mute latency and stream ramp-up</td></tr>
-      <tr><td><strong>Message relay</strong></td><td class="num"><strong>real time</strong></td><td>No added delay for the whole transmission</td></tr>
-    </tbody>
-  </table></div>
+  <p>A <em>hail</em> is an audio bridge between two or more vessel channels, opened on demand by a channel owner. Owner audio only crosses the bridge; other members' audio stays local to their own channel and is inaudible to the far end.</p>
 
-  <div class="call">
-    <span class="lab">Consequence: streaming STT is no longer required</span>
-    <p>The recognition window is one short fixed utterance, and its latency sits in dead air before the cue where nobody is transmitting. Chunked local Whisper now delivers the same feel as a streaming cloud recogniser, so <strong>local is the default</strong> and cloud is an option, not the price of real-time. STT volume also drops from continuous transcription to one ~1 s clip per transmission.</p>
+  <h3>Opening a hail</h3>
+
+  <div class="flow">
+    <span class="st">owner clicks [Hail]</span><span class="ar">→</span>
+    <span class="st hi">select-menu of hail_registry</span><span class="ar">→</span>
+    <span class="st hi">allocate free relay bots</span><span class="ar">→</span>
+    <span class="st">bots join each participating channel</span><span class="ar">→</span>
+    <span class="st hi">Ring / Attention / Ready cues</span><span class="ar">→</span>
+    <span class="st">bidirectional relay</span>
   </div>
 
-  <h3>Stream continuity</h3>
-  <ul>
-    <li>Once <code>OPEN</code>, the target stream stays up and emits silence frames between utterances. Restarting a stream per utterance clips first words.</li>
-    <li>~200 ms silence pre-roll on every cue asset, for the same reason on net open.</li>
-    <li><code>@discordjs/voice</code> already emits the trailing silence-frame sequence — leave it alone, it prevents last-packet repeat on receivers.</li>
-  </ul>
-  <p>The call-up itself is consumed, not relayed. Targets hear the cue, not “Command Charlie”. The addressed callsign appears in the mirror embed (§7).</p>
+  <p>Steps:</p>
 
-  <h3>Ducking the receiving net</h3>
-  <p>Engaged at net open, released at close — once per transmission, not per utterance, and inside the D<sub>c</sub> cue window where its latency is invisible.</p>
+  <ol>
+    <li>The owner of a hail-enabled vessel clicks <strong>Hail</strong> on their control panel.</li>
+    <li>The bot presents a multi-select menu of currently-registered hail channels, excluding the owner's own vessel. Selecting no targets cancels.</li>
+    <li>The allocator picks a free relay bot for each participating channel — including the caller's own. If not enough bots are free the caller receives an ephemeral <em>"All relays are busy — try again in a moment"</em> and the hail is cancelled.</li>
+    <li>Each allocated bot joins its assigned channel and enters the acceptance phase per §6.2.</li>
+    <li>Once accepted, all bots play <code>Ready</code> at the caller and <code>Attention</code> at the targets on the same instant (§7). Cue duration D<sub>c</sub> masks the join latency and ensures the message body starts after every listener has already heard the alert.</li>
+    <li>The bidirectional relay opens. Each participating channel gets an <strong>End hail</strong> button posted in its voice-text chat.</li>
+  </ol>
+
+  <h3>Acceptance</h3>
+
   <div class="tw"><table>
-    <thead><tr><th></th><th>Priority speaker (default)</th><th>Hard mute (opt-in)</th></tr></thead>
+    <thead><tr><th>Target state</th><th>Behaviour</th></tr></thead>
     <tbody>
-      <tr><td>Mechanism</td><td><code>PRIORITY_SPEAKER</code> on relay bots; clients attenuate others while bot transmits</td><td><code>PATCH</code> member <code>mute:true</code> at open, restore at close</td></tr>
-      <tr><td>Cost</td><td>0 API calls</td><td>2 req/member/<strong>transmission</strong></td></tr>
-      <tr><td>Latency</td><td>instant</td><td>~1 s, hidden inside the cue window</td></tr>
-      <tr><td>Determinism</td><td>best-effort — attenuation is a client-side setting</td><td>absolute</td></tr>
-      <tr><td>Failure mode</td><td>listener hears both</td><td><strong>crash leaves humans muted</strong></td></tr>
+      <tr><td>Hail-enabled, <strong>unlocked</strong></td><td>Auto-accept after one <code>Ring</code>. The hail opens after D<sub>c</sub>.</td></tr>
+      <tr><td>Hail-enabled, <strong>locked</strong></td><td>Ring for up to 20 s — <code>Ring</code> cue repeated at ~4 s intervals — while an <strong>Accept / Decline</strong> button pair is posted in the target's voice-text chat. Accept opens the hail. Decline plays <code>Busy</code> back to the caller and the leg drops. No click within 20 s auto-declines.</td></tr>
+      <tr><td>Not hail-enabled</td><td>Not listed in the caller's select menu in the first place — cannot be targeted.</td></tr>
     </tbody>
   </table></div>
-  <p>Hard mute guards: member-count ceiling → degrade to attenuation; bounded concurrent request pool; pre-mute state written to <code>mute_state</code> before first request so boot sweep restores. The per-transmission cost model makes hard mute affordable in a way per-utterance muting was not.</p>
 
-  <h3>Connection hygiene</h3>
+  <p>A hail can therefore fail with any subset of its selected targets declining. The remaining accepted targets open the hail with the caller. If <em>all</em> targets decline, the hail closes with <code>Busy</code> back at the caller and no bots stay behind.</p>
+
+  <h3>Closing</h3>
+
+  <p>Two independent close paths:</p>
+
   <ul>
-    <li>Park permanently. No idle disconnect.</li>
-    <li>Prefer session resume over rejoin — resume emits no voice state change, no chime.</li>
-    <li><code>selfDeaf</code> on send-only squad nets. Never <code>selfMute</code> — every listening bot must be able to play cues.</li>
-    <li><strong>Transient undeafening for replies.</strong> A squad bot lifts <code>selfDeaf</code> via <code>connection.rejoin({ selfDeaf: false })</code> for the duration of an open reply and restores it on close. Rejoin re-sends the voice state without changing channel, so it costs one gateway message and the latency hides inside the D<sub>c</sub> cue window. <em>Verify on the spike that rejoin produces no client-side join chime</em> — it should not, since the channel is unchanged, but chimes are a stated product constraint (§4).</li>
-    <li>Re-deafening must be crash-safe: the boot sweep re-deafens every send-only net (§11).</li>
+    <li><strong>Per-channel end button.</strong> Each participating channel's voice-text chat carries an <strong>End hail</strong> button posted at hail open. Any member of that channel who is either the vessel's owner or holds <code>MOVE_MEMBERS</code> may press it. Pressing plays <code>Out</code> in that channel, its bot leaves voice, and the channel drops from the hail. If only one channel remains after a drop, the hail auto-closes on that channel too.</li>
+    <li><strong>10 s all-quiet timer.</strong> Each relay bot tracks whether its channel's owner is currently speaking (via <code>receiver.speaking</code> events, owner user id only). A hail-wide clock records the timestamp of the last owner speech across all channels. When <code>Date.now() − lastSpeech &gt; 10_000</code>, the hail closes on every side: <code>Out</code> cue everywhere, all bots leave.</li>
   </ul>
+
+  <div class="call">
+    <span class="lab">Why 10 s</span>
+    <p>Long enough that a natural pause between exchanges — "OK, moving in… (pause) … in position" — does not cut the hail. Short enough that a completed conversation ends promptly. Configurable per guild via <code>guilds.hail_silence_close_ms</code>.</p>
+  </div>
+
+  <h3>State recording</h3>
+
+  <p>Every hail open, accept, decline, per-channel end, and auto-close is written to the <code>hail_events</code> audit trail (§10). Peak concurrent bots and total duration are recorded on the <code>active_hails</code> row at close time. This is the "who called whom, when, for how long" surface — sufficient for admin review without any audio content.</p>
 </section>
 
 <section id="s7">
-  <h2><b>07</b> Mirror &amp; acks</h2>
-  <p>Embed posted to source net chat and each target net chat <strong>at net open</strong>, so receivers can acknowledge while still listening. Transcript is edited in at close, when the async body transcription returns (§10). Target copies carry <strong>Acknowledge</strong>; press adds a reaction to the source copy.</p>
+  <h2><b>07</b> Cues</h2>
+
+  <p>Cues are short pre-encoded Opus assets played by a bot into its channel at defined moments in the hail lifecycle. Pre-encoded to Opus frames and cached in memory at startup — no <code>ffmpeg</code> spawn per cue, constant playback latency.</p>
+
   <div class="tw"><table>
-    <thead><tr><th>Field</th><th>At open</th><th>At close</th></tr></thead>
+    <thead><tr><th>Cue</th><th>Plays in</th><th>Trigger</th></tr></thead>
     <tbody>
-      <tr><td>Colour</td><td>alert = rust, hail/command = accent, broadcast = neutral</td><td>unchanged</td></tr>
-      <tr><td>Header</td><td><code>COMMAND → CHARLIE · receiving</code></td><td><code>COMMAND → CHARLIE · 14 s</code></td></tr>
-      <tr><td>Body</td><td>—</td><td>Transcript, labelled machine-generated</td></tr>
-      <tr><td>Footer</td><td>speaker, source callsign, ts</td><td>+ duration, close reason</td></tr>
-      <tr><td>Skipped nets</td><td>named if <code>broadcast</code> hit a busy net</td><td>unchanged</td></tr>
-      <tr><td>Components</td><td>target copies: <strong>Acknowledge</strong> for every member; <strong>Reply by voice</strong> and <strong>Reply by text</strong> for that net's lead only</td><td>unchanged</td></tr>
-      <tr><td>Lead line</td><td>the net's current lead, or <em>no lead assigned</em></td><td>+ replies sent</td></tr>
+      <tr><td><code>Ready</code></td><td>caller's channel</td><td>hail opened, targets accepted, message body about to start</td></tr>
+      <tr><td><code>Attention</code></td><td>each accepted target channel</td><td>hail open, mirrors <code>Ready</code>'s timing</td></tr>
+      <tr><td><code>Ring</code></td><td>target channel</td><td>hail requested against that target. Plays once in unlocked channels; repeats up to 5× at ~4 s intervals in locked channels</td></tr>
+      <tr><td><code>Busy</code></td><td>caller's channel</td><td>a target refused (declined, timed out) or no bots free to allocate</td></tr>
+      <tr><td><code>Out</code></td><td>the channel closing</td><td>a per-channel end, or hail-wide auto-close on all channels</td></tr>
     </tbody>
   </table></div>
-  <p>A non-lead pressing <strong>Reply</strong> gets an ephemeral naming their lead. An unled net shows <em>no lead assigned</em> on the embed, so the commander can see why no answer is coming rather than waiting on one.</p>
-  <p>Ack reaction = regional-indicator emoji of the acking net's callsign (🇦 Alfa, 🇧 Bravo). Broadcast to 8 squads accumulates a letter row on the source message; missing letters are the outstanding nets. Reactions are display state; <code>acks</code> is the record.</p>
+
+  <p>Cue sets are per guild (shipped defaults or operator-supplied WAVs). All time-critical assets — <code>Ready</code>, <code>Attention</code>, <code>Ring</code> — must be equal length D<sub>c</sub>; startup validates this and fails loudly on mismatch, because the caller's <code>Ready</code> and each target's <code>Attention</code>/<code>Ring</code> start on the same instant and their end defines when the message body can start.</p>
+
+  <p>The old draft 0.5 <code>Horn</code>, <code>Negative</code> and squad-callsign cues are dropped: their spec-§5 triggers (alert-mode preemption, callsign mismatch) do not exist in Star Comms.</p>
+
+  <h4>Timers</h4>
+
+  <div class="tw"><table>
+    <thead><tr><th>Setting</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>cue_duration_ms</code> (D<sub>c</sub>)</td><td class="num">1200</td><td>All equal-length cue assets normalised/padded to this length</td></tr>
+      <tr><td><code>ring_interval_ms</code></td><td class="num">4000</td><td>Gap between repeated <code>Ring</code> plays in locked channels</td></tr>
+      <tr><td><code>ring_max_ms</code></td><td class="num">20000</td><td>Total ringing budget for a locked-channel target; auto-decline after</td></tr>
+      <tr><td><code>hail_silence_close_ms</code></td><td class="num">10000</td><td>Hail closes if no participating owner has spoken for this long</td></tr>
+      <tr><td><code>hail_max_hold_ms</code></td><td class="num">1800000</td><td>Hard cap on a single hail (30 min). Safety net; typical hails end long before this.</td></tr>
+    </tbody>
+  </table></div>
 </section>
 
 <section id="s8">
-  <h2><b>08</b> Session lifecycle</h2>
-  <h3><code>/star-bridge</code></h3>
-  <p>Ephemeral, button-driven. Q1 structure. Q2 net count, one button per available count up to free-slot ceiling; when exhausted, name the holding session and stop (no queue). On confirm: reveal channels, fleet joins, move invoker into command/first ops net, record as <strong>lead</strong>.</p>
+  <h2><b>08</b> Audio path</h2>
 
-  <div class="call risk">
-    <span class="lab">Ephemeral cannot host the control panel</span>
-    <p>Interaction tokens expire at 15 min; components become unupdatable. Sessions run hours. Panel is <strong>DM'd to the lead</strong> as a normal message, re-sent on transfer. DM rejected by privacy settings → fall back to a message in the Star Bridge text channel with handler-side lead check, ephemeral rejection for others.</p>
-  </div>
-  <p>Panel: <strong>End session</strong> · <strong>Pass lead</strong> (select menu of members on command net) · <strong>Mute others on/off</strong> · live status (nets, relay count, lead).</p>
+  <p>Each participating channel gets one relay bot. Each relay bot runs two audio directions simultaneously:</p>
 
-  <h3>Squad leads</h3>
-  <p>The fleet commander assigns one lead per squad or ops net, from the control panel: <strong>Promote squad lead</strong> → select the net → select the member.</p>
   <ul>
-    <li><strong>No separate confirm step.</strong> Two deliberate selections already gate it, and it is reversible by promoting again. The real risk is not a mis-click but audio landing mid-transmission, and the queue rule in §5 handles that better than an extra click during an operation.</li>
-    <li>The member menu is populated from the target channel's <em>voice states</em>. Discord's native user select cannot be filtered to a channel's occupants, so this is a string select — 25-option cap, paginate above that.</li>
-    <li>Empty net → ephemeral <em>“no one is on Charlie”</em>, not an empty menu.</li>
-    <li>On commit: upsert <code>squad_leads</code> (one row per net, so promoting implicitly demotes the previous lead), queue the announcement into that net, post the text line, refresh the panel.</li>
+    <li><strong>Send:</strong> subscribes to the channel's <em>owner</em> SSRC via <code>receiver.subscribe(ownerUserId)</code>. Forwards the raw opus stream to every <em>other</em> participating bot's outbound player.</li>
+    <li><strong>Receive:</strong> its outbound <code>AudioPlayer</code> plays whatever the other bots forward in. Bot transmits into the channel via a <code>selfDeaf: false, selfMute: false</code> voice connection.</li>
   </ul>
 
-  <div class="tw"><table>
-    <thead><tr><th>What a squad lead is</th><th>v1</th></tr></thead>
-    <tbody>
-      <tr><td>Named in the control panel and in every embed addressed to that net</td><td>yes</td></tr>
-      <tr><td>Their <strong>Acknowledge</strong> is the net's authoritative ack; other members' clicks are recorded but do not clear the net</td><td>yes</td></tr>
-      <tr><td>Can hand off within their own net — same picker, restricted to that net</td><td>yes</td></tr>
-      <tr><td><strong>The squad's only reply channel</strong> — voice back to the commander, button-gated (§5)</td><td>yes</td></tr>
-      <tr><td>Text reply into command/ops, tagged with the squad callsign</td><td>yes</td></tr>
-      <tr><td>Spoken call-up authority on a squad net</td><td>no — there is no detection on squad nets, by design</td></tr>
-    </tbody>
-  </table></div>
+  <p>Only the owner's SSRC is subscribed on the send side. Other members in the channel talk locally — Discord's client mixes their audio for humans in the channel — but their audio is not picked up by the bot and not forwarded across the hail. This is the "captain-to-captain radio" semantic.</p>
 
-  <p><strong>An unled net is acknowledge-only.</strong> No reply affordance appears until a lead is assigned — silent and predictable, and promotion is one dialog away. The commander's panel flags unled nets so this is never a mid-operation surprise.</p>
-  <p>Vacated silently when the lead leaves the net — no announcement, since an unprompted promotion cue mid-operation is noise. The panel shows the net as unled and the commander re-promotes. All leads are cleared at session end.</p>
+  <h3>Multi-way hails and simultaneous speakers</h3>
 
-  <h3>Teardown</h3>
-  <p>5 min timer from last member leaving command/first ops net; rejoin cancels. On expiry: move remaining members in session channels to guild AFK channel, fleet leaves, overwrites re-denied, session closed.</p>
+  <p>A bot's <code>AudioPlayer</code> can transmit only one opus stream at a time. When two remote owners speak simultaneously into a hail with three or more participating channels, the local bot picks up two inbound streams but can transmit only one — <strong>last-speaker-wins</strong> in v1. If Firefly and Serenity both talk into a 3-way hail with Explorer, whichever's opus arrived at Explorer's bot most recently is what Explorer hears; the other stream is stepped on.</p>
+
+  <div class="call">
+    <span class="lab">Mixing is future work</span>
+    <p>Proper N-way mixing requires decoding each inbound stream to PCM, summing, re-encoding to opus per outbound target. ~10 ms CPU per active speaker per receiving side, no crypto involvement. Ships in a follow-up if last-speaker-wins turns out to bite in real use.</p>
+  </div>
+
+  <h3>Hard audio constraints</h3>
+
   <ul>
-    <li>No AFK channel → configured fallback channel → disconnect. Never leave a member in a hidden channel.</li>
-    <li><code>teardown_at</code> persisted; boot sweep closes anything expired. Deploy mid-session must not orphan state.</li>
-    <li>Lead leaves without transfer → promote longest-present member on command net, DM them.</li>
+    <li><strong>§ Fleet SSRC suppression.</strong> Every bot filters its own <code>receiver.speaking.on('start')</code> events against the fleet's user id set. Without this, cues played by another relay bot in the same channel — impossible in v1 because at most one bot ever sits in a channel, but the guard remains — would loop through the hail. This is a permanent invariant, not an implementation detail.</li>
+    <li><strong>§ No audio to disk.</strong> Opus frames are relayed in memory. There is no recording, no transcription, no archival path.</li>
+    <li><strong>§ <code>selfMute</code> is never set.</strong> Every relay bot must be able to play cues into its channel.</li>
+    <li><strong>§ Voice-adapter routing.</strong> Every <code>joinVoiceChannel</code> uses the joining bot's own <code>Guild.voiceAdapterCreator</code> — never the interaction guild's, which is the controller's. Recorded as a hard constraint in <code>CLAUDE.md</code>.</li>
+    <li><strong>§ Per-bot <code>group</code> on <code>joinVoiceChannel</code>.</strong> Set <code>group: userId</code> or the connection will collide with another bot in the same guild.</li>
+    <li><strong>§ <code>maxMissedFrames: Infinity</code></strong> on outbound players fed from receiver streams. Default 5 kills the resource on inter-word pauses.</li>
+    <li><strong>§ Tolerate DAVE decrypt errors.</strong> <code>AudioReceiveStream</code> and its consuming <code>AudioPlayer</code> both need <code>'error'</code> listeners that swallow <code>DecryptionFailed(UnencryptedWhenPassthroughDisabled)</code> and continue.</li>
   </ul>
 </section>
 
 <section id="s9">
-  <h2><b>09</b> Admin &amp; licensing</h2>
-  <p><code>/star-bridge-admin</code> registered as a <strong>guild command in the owner's guild only</strong>, never global. Registration scope is the primary gate; per-handler role check is the second.</p>
+  <h2><b>09</b> Admin</h2>
+
   <div class="tw"><table>
-    <thead><tr><th>Subcommand</th><th>Effect</th></tr></thead>
+    <thead><tr><th>Command</th><th>Purpose</th><th>Who can run it</th></tr></thead>
     <tbody>
-      <tr><td><code>guild add &lt;id&gt; &lt;slots&gt;</code></td><td>License, set quota, return N install links</td></tr>
-      <tr><td><code>guild list</code></td><td>name, quota, members present, sessions this month, status</td></tr>
-      <tr><td><code>guild suspend|resume &lt;id&gt;</code></td><td>Block new sessions, keep bots and pool</td></tr>
-      <tr><td><code>guild remove &lt;id&gt;</code></td><td>End sessions, delete pool, fleet leaves, purge guild data</td></tr>
-      <tr><td><code>stats [guild] [period]</code></td><td>relays by verb, voice minutes, sessions, peak concurrent nets, ack rate, callsign-miss rate</td></tr>
-      <tr><td><code>fleet status</code></td><td>per member: gateway state, guilds, voice connections, reconnects since boot, intent assertions, lib version</td></tr>
-      <tr><td><code>fleet drain</code></td><td>Block new sessions, report when last ends — pre-deploy gate</td></tr>
-      <tr><td><code>variants &lt;guild&gt;</code></td><td>Review/prune learned misrecognitions</td></tr>
+      <tr><td><code>/star-comms init</code></td><td>Select the guild's join-to-create channel; enable Star Comms in this guild</td><td>Manage Guild</td></tr>
+      <tr><td><code>/star-comms status</code></td><td>Fleet health + list of active hails + bot pool free/busy</td><td>Manage Guild</td></tr>
+      <tr><td><code>/star-comms register &lt;callsign&gt;</code></td><td>Set or replace the invoker's callsign</td><td>Any member</td></tr>
+      <tr><td><code>/star-comms unregister</code></td><td>Remove the invoker's callsign</td><td>Any member</td></tr>
+      <tr><td><code>/star-comms callsign</code></td><td>Report the invoker's callsign</td><td>Any member</td></tr>
+      <tr><td><code>/star-comms hail-registry</code></td><td>List currently-registered hail channels (for troubleshooting)</td><td>Any member</td></tr>
+      <tr><td><code>/star-comms drain</code></td><td>Refuse new hails; existing hails complete; used before deploy</td><td>Manage Guild</td></tr>
     </tbody>
   </table></div>
 
-<pre><code>https://discord.com/oauth2/authorize
-  ?client_id=&lt;application_id&gt;
-  &amp;scope=bot%20applications.commands
-  &amp;permissions=&lt;bitfield&gt;
-  &amp;guild_id=&lt;target_guild_id&gt;
-  &amp;disable_guild_select=true</code></pre>
-  <p><code>guild_id</code> + <code>disable_guild_select</code> pins the install target — relevant when pasting 12 links. Controller link carries the wide bitfield; others carry the minimum.</p>
-  <p><strong>Enforcement:</strong> <code>GUILD_CREATE</code> for unlicensed guild → DM inviter, leave. Leaked links are then inert.</p>
-
-  <h4>Alert on</h4>
-  <ul>
-    <li>Member off-gateway &gt;60 s. Reconnect rate above a few/hour (leading symptom of protocol break).</li>
-    <li>Voice connections held ≠ sessions expected.</li>
-    <li>Rising callsign-miss rate per guild. STT latency or error rate over budget.</li>
-  </ul>
+  <p>Alerts are logged to <code>hail_events</code> and to stdout. There is no separate alerting channel in v1 — an admin monitors the compose log for anomalies.</p>
 </section>
 
 <section id="s10">
-  <h2><b>10</b> Danish</h2>
-  <div class="tw"><table>
-    <thead><tr><th>Path</th><th>Locale-sensitive</th><th>Error consequence</th></tr></thead>
-    <tbody>
-      <tr><td>Audio relay</td><td><strong>No</strong> — raw copy, never transcribed</td><td>none</td></tr>
-      <tr><td>Verb + callsign</td><td><strong>Yes</strong></td><td>operational: misroute or no route</td></tr>
-      <tr><td>Mirror transcript</td><td>Yes</td><td>cosmetic</td></tr>
-    </tbody>
-  </table></div>
-  <p>Recognition target is 4 verbs + 12 callsigns — closed vocabulary, not open Danish transcription. Two STT paths, with different requirements:</p>
-  <div class="tw"><table>
-    <thead><tr><th>Path</th><th>Input</th><th>Latency</th><th>Model</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Call-up</strong> (operational)</td><td>~1 s utterance, 16-token vocabulary, hotword-biased</td><td>Budgeted, §6</td><td>Small/fast is sufficient</td></tr>
-      <tr><td><strong>Body</strong> (cosmetic)</td><td>Whole message, open vocabulary</td><td>Irrelevant — async, edited into the embed on return</td><td>Larger model, batched</td></tr>
-    </tbody>
-  </table></div>
-  <p>Danish accuracy pressure lands almost entirely on the first path, against a closed 16-token vocabulary. The second can fail badly with no operational effect.</p>
+  <h2><b>10</b> Schema</h2>
 
-  <div class="call risk">
-    <span class="lab">Correction to earlier recommendation</span>
-    <p><code>faster-distil-whisper-large-v3</code> is <strong>English-only</strong>. Danish requires multilingual <code>Systran/faster-whisper-large-v3</code> or a Danish fine-tune. Set <code>language: "da"</code> explicitly — autodetect is unreliable on short utterances and fails on da/en code-switching (Danish orders, English callsigns).</p>
-  </div>
+  <p>SQLite, WAL, host bind mount. <code>better-sqlite3</code> — native module, constrains base image (§12).</p>
 
-  <div class="tw"><table>
-    <thead><tr><th>Recogniser</th><th>Streaming</th><th>Note</th></tr></thead>
-    <tbody>
-      <tr><td>Whisper <code>large-v3</code> multilingual</td><td>chunked</td><td><strong>Default.</strong> Chunked is sufficient — call-up latency hides in the cue window (§6). GPU required for budget</td></tr>
-      <tr><td>Danish fine-tunes</td><td>chunked</td><td>Alexandra Institute CoRal / Røst, Whisper fine-tunes (<em>hviske</em>) beat base Whisper on da. <em>Verify current leader — field moves fast</em></td></tr>
-      <tr><td>Deepgram</td><td><strong>yes</strong></td><td>da supported, ~300 ms, keyword boosting. Audio off-site. Optional — streaming is no longer needed for real-time relay</td></tr>
-      <tr><td>Azure Speech <code>da-DK</code></td><td><strong>yes</strong></td><td>Strong on da, EU region available</td></tr>
-    </tbody>
-  </table></div>
+<pre><code>-- guilds
+guilds(id PK, name, added_at, added_by,
+       join_to_create_channel_id,
+       ops_channel_id,
+       locale,
+       cue_set, cue_duration_ms,
+       ring_interval_ms, ring_max_ms,
+       hail_silence_close_ms, hail_max_hold_ms,
+       status)                                     -- active | drained | suspended
 
-  <p><strong>Biasing:</strong> seed every request with active verbs + allocated callsigns (<code>hotwords</code>/<code>initial_prompt</code> for faster-whisper, keyword boost for Deepgram). Cheapest accuracy gain available, zero marginal cost.</p>
-  <p><strong>Wake word: none.</strong> Porcupine has no Danish. Continuous recognition on command nets instead — few speakers, only lead can route, removes a component needing da-specific training. Revisit only on STT cost pressure.</p>
+-- fleet
+bots(id PK, application_id, token_ref, kind,        -- kind: controller | relay
+     invite_permissions)
 
-  <div class="tw"><table>
-    <thead><tr><th>Intent</th><th><code>en</code></th><th><code>da</code> (proposed)</th></tr></thead>
-    <tbody>
-      <tr><td>priority, all nets</td><td>alert</td><td>alarm</td></tr>
-      <tr><td>routine, all nets</td><td>broadcast</td><td>udsend</td></tr>
-      <tr><td>to command/ops net</td><td>hail</td><td>kald</td></tr>
-      <tr><td>to squad net</td><td>command</td><td>ordre</td></tr>
-      <tr><td>terminator</td><td>out</td><td>slut</td></tr>
-    </tbody>
-  </table></div>
-  <h3>Announcement voice</h3>
-  <p>Piper for both languages (<code>da_DK-talesyntese-medium</code>, any <code>en_*</code> voice), rendered once per (locale, spoken name) and cached in memory. The announcement string is a locale template — <code>{name} er nu holdfører</code> / <code>{name} is now squad lead</code> — resolved in the <em>session</em> locale, not the listener's, because a channel carries one audio stream (§5).</p>
+-- per-member callsigns, one row per (guild, user)
+callsigns(guild_id, user_id, callsign, registered_at,
+          PK(guild_id, user_id),
+          UNIQUE(guild_id, callsign))
 
-  <p>Locale pack = intent → accepted spoken forms, several per intent, extended via <code>alias_variants</code>. Many Danish units use English procedure words by convention — ship both, select per guild. Danish set above is a proposal, not a finding; check with the operators who will say them under load.</p>
+-- vessels — voice channels Star Comms is aware of
+vessels(id PK, guild_id, channel_id UNIQUE,
+        owner_user_id, created_at, deleted_at,
+        locked, user_limit)
+
+-- hail directory: which vessels currently accept incoming hails
+hail_registry(channel_id PK, guild_id, callsign, registered_at)
+
+-- active hails and their participants
+active_hails(id PK, guild_id, initiator_channel_id, opened_at, closed_at,
+             close_reason,                          -- silence | button | initiator_left |
+                                                    --   all_declined | drain
+             peak_bots)
+hail_participants(hail_id, channel_id, bot_id, joined_at, left_at, decision,
+                  PK(hail_id, channel_id))          -- decision: accepted | declined |
+                                                    --   ended_early | timed_out
+
+-- audit trail
+hail_events(id PK, hail_id, ts, kind, actor_user_id, target_channel_id, note)
+                                                    -- kind: opened | ring_started | accepted
+                                                    --   | declined | ended_channel |
+                                                    --   ended_all | close_silence
+audit(id PK, actor_id, action, target, payload_json, at)
+
+-- cue assets
+cue_sets(id PK, guild_id, locale, duration_ms)
+cue_assets(cue_set_id, cue, path, duration_ms, PK(cue_set_id, cue))
+                                                    -- cue: ready | attention | ring |
+                                                    --   busy | out</code></pre>
+
+  <p>Boot sweep reads three tables before the fleet connects to Discord: <code>active_hails</code> (any row without <code>closed_at</code> is force-closed with reason <code>drain</code>), <code>vessels</code> (any row whose <code>channel_id</code> no longer exists on Discord is marked <code>deleted_at</code>), and <code>hail_registry</code> (any row whose channel no longer exists is dropped). A crash mid-hail leaves stale state; this repairs it before the fleet touches voice.</p>
+
+  <p>Backup: nightly <code>sqlite3 .backup</code> to the mount, 7-day rotation.</p>
 </section>
 
 <section id="s11">
-  <h2><b>11</b> Schema</h2>
-  <p>SQLite, WAL, host bind mount. <code>better-sqlite3</code> — native module, constrains base image (§13).</p>
-<pre><code>-- licensing
-guilds(id PK, name, added_at, added_by, slot_quota, status,
-       mode_default, locale, mute_mode, stt_driver, trigger_role_id,
-       category_id, control_channel_id,
-       cue_set, cue_duration_ms, open_timeout_ms, silence_close_ms,
-       max_hold_ms, close_cue_enabled,
-       tts_driver, tts_voice, announce_promotions)
+  <h2><b>11</b> Permissions &amp; intents</h2>
 
--- fleet
-bots(id PK, nato, application_id, token_ref, is_controller, invite_permissions)
-guild_bots(guild_id, bot_id, joined_at, PK(guild_id, bot_id))
-channel_pool(guild_id, nato, channel_id, kind, PK(guild_id, nato))
-
--- cue assets  (validated equal-duration at startup)
-cue_sets(id PK, guild_id, locale, duration_ms)
-cue_assets(cue_set_id, cue, path, duration_ms, PK(cue_set_id, cue))
-               -- cue: ready|attention|horn|negative|busy|out
-
--- sessions
-sessions(id PK, guild_id, mode, lead_user_id, started_at, ended_at,
-         teardown_at, mute_others)
-session_nets(session_id, nato, channel_id, bot_id, role,
-             PK(session_id, nato))                 -- role: command|squad|ops
-squad_leads(session_id, nato, user_id, promoted_by, promoted_at,
-            PK(session_id, nato))   -- one per net; upsert implicitly demotes
-spoken_names(guild_id, user_id, spoken_name, PK(guild_id, user_id))
-                                    -- TTS override for unspeakable display names
-
--- traffic
-relays(id PK, session_id, kind, verb, source_nato, speaker_user_id,
-       state, opened_at, closed_at, close_reason, duration_ms,
-       callup_transcript, callup_confidence, body_transcript,
-       reply_to_relay_id, source_message_id)
-               -- kind: order|voice_reply|text_reply
-               -- verb NULL on replies; target is reply_to_relay_id's source
-               -- text_reply stores the typed text in body_transcript
-               -- state: opening|open|closing|closed
-               -- close_reason: silence|terminator|max_hold|preempted|
-               --               open_timeout|session_end
-relay_targets(relay_id, target_nato, message_id, delivered, skip_reason,
-              PK(relay_id, target_nato))     -- skip_reason: busy|unavailable
-acks(relay_id, target_nato, user_id, acked_at, PK(relay_id, target_nato, user_id))
-
--- recognition
-alias_variants(guild_id, kind, canonical, variant, added_by, added_at,
-               PK(guild_id, kind, variant))        -- kind: callsign|verb
-misses(id PK, guild_id, session_id, heard, at)
-
--- crash safety + stats
-mute_state(session_id, user_id, channel_id, prev_mute, set_at,
-           PK(session_id, user_id))
-usage_daily(guild_id, day, sessions, relays, voice_minutes, acks, misses,
-            PK(guild_id, day))
-audit(id PK, actor_id, action, target, payload_json, at)</code></pre>
-  <p>Boot sweep, before the fleet connects: <code>mute_state</code> (unmute abandoned members), <code>sessions.teardown_at</code> (finish expired teardowns), <code>channel_pool</code> (repair overwrites), <code>relays.state</code> (close nets left open by the crash, release locks), and <code>session_nets</code> (re-deafen every send-only net, in case a crash left one undeafened mid-reply).</p>
-  <p><code>misses</code> + <code>alias_variants</code> are the recognition feedback loop — for Danish this matters more than model choice.</p>
-  <p>Backup: nightly <code>sqlite3 .backup</code> to the mount, 7-day rotation. Litestream if stats history becomes valuable.</p>
-</section>
-
-<section id="s12">
-  <h2><b>12</b> Permissions &amp; intents</h2>
   <div class="tw"><table>
     <thead><tr><th>Permission</th><th>Controller</th><th>Relays</th><th>For</th></tr></thead>
     <tbody>
-      <tr><td><code>VIEW_CHANNEL</code> <code>CONNECT</code> <code>SPEAK</code></td><td>✓</td><td>✓</td><td>park + transmit</td></tr>
-      <tr><td><code>PRIORITY_SPEAKER</code></td><td>✓</td><td>✓</td><td>default ducking</td></tr>
-      <tr><td><code>SEND_MESSAGES</code> <code>EMBED_LINKS</code> <code>ADD_REACTIONS</code> <code>READ_MESSAGE_HISTORY</code></td><td>✓</td><td>✓</td><td>mirror + acks</td></tr>
-      <tr><td><code>MANAGE_CHANNELS</code></td><td>✓</td><td>—</td><td>create pool once/guild</td></tr>
-      <tr><td><code>MANAGE_ROLES</code></td><td>✓</td><td>—</td><td>reveal/hide overwrites</td></tr>
-      <tr><td><code>MOVE_MEMBERS</code></td><td>✓</td><td>—</td><td>move lead in, stragglers to AFK</td></tr>
-      <tr><td><code>MUTE_MEMBERS</code></td><td>✓</td><td>—</td><td>hard mute only</td></tr>
+      <tr><td><code>VIEW_CHANNEL</code> <code>CONNECT</code> <code>SPEAK</code></td><td>&#10003;</td><td>&#10003;</td><td>join voice, transmit cues + relay</td></tr>
+      <tr><td><code>PRIORITY_SPEAKER</code></td><td>&mdash;</td><td>&#10003;</td><td>client-side ducking of channel members while relay is transmitting</td></tr>
+      <tr><td><code>MANAGE_CHANNELS</code></td><td>&#10003;</td><td>&mdash;</td><td>create + rename + delete vessels</td></tr>
+      <tr><td><code>MANAGE_ROLES</code></td><td>&#10003;</td><td>&mdash;</td><td>set overwrites for lock, hail-directory, controller access</td></tr>
+      <tr><td><code>MOVE_MEMBERS</code></td><td>&#10003;</td><td>&mdash;</td><td>move a join-to-create member into their new vessel</td></tr>
+      <tr><td><code>SEND_MESSAGES</code> <code>EMBED_LINKS</code> <code>ADD_REACTIONS</code> <code>READ_MESSAGE_HISTORY</code></td><td>&#10003;</td><td>&mdash;</td><td>post the control panel + end-hail buttons in voice-text chats</td></tr>
     </tbody>
   </table></div>
+
   <p>Intents: <code>GUILDS</code>, <code>GUILD_VOICE_STATES</code>, <code>GUILD_MEMBERS</code>. <code>MESSAGE_CONTENT</code> not needed.</p>
+
   <div class="call risk">
     <span class="lab">Privileged intent × N</span>
-    <p><code>GUILD_MEMBERS</code> is privileged, toggled by hand per application. Miss one and that member connects but cannot resolve net membership. <code>fleet status</code> asserts it at boot.</p>
+    <p><code>GUILD_MEMBERS</code> is privileged, toggled by hand per application. Miss it and that bot's login fails with <code>DisallowedIntents</code>. <code>/star-comms status</code> asserts every bot logged in successfully at boot.</p>
+  </div>
+</section>
+
+<section id="s12">
+  <h2><b>12</b> Deployment</h2>
+
+  <p>Single process runs controller + all relays; no relay crosses a process boundary. Split only if we ever exceed one machine's UDP send capacity — not a v1 concern.</p>
+
+<pre><code>docker-compose.yml            # bot service, volumes, healthcheck
+docker-compose.override.yml   # dev: source-mounted, watch mode
+docker-compose.prod.yml       # prod: pinned image, no bind mount
+Dockerfile                    # multi-stage, Debian slim
+                              # native: better-sqlite3, @snazzah/davey, @discordjs/opus</code></pre>
+
+  <p><code>/star-comms drain</code> before deploy. Restart mid-hail is survivable — bots reconnect and the hail is reopened only if participants press <strong>Hail</strong> again; there is no automatic resume of an in-flight hail across a restart.</p>
+
+  <div class="call risk">
+    <span class="lab">Debian, never Alpine</span>
+    <p><code>@snazzah/davey</code> (DAVE end-to-end encryption), <code>@discordjs/opus</code>, and <code>better-sqlite3</code> are native modules; musl breaks them. Enforced in the Dockerfile <code>FROM node:22-bookworm-slim</code>.</p>
   </div>
 </section>
 
 <section id="s13">
-  <h2><b>13</b> Deployment</h2>
-  <p>Single process runs controller + all fleet members; router stays in-memory, no relay crosses a process boundary. Split only past ~20 nets/guild, and then with a shared bus.</p>
-<pre><code>docker-compose.yml            # services, volumes, healthchecks
-docker-compose.override.yml   # dev: CPU whisper, src mount, watch
-docker-compose.prod.yml       # prod: GPU, limits, log rotation
-Dockerfile                    # multi-stage, debian
-config/fleet.yaml             # members, token refs, locale packs
-data/                         # host bind mount: starbridge.db + backups</code></pre>
-
-<pre><code>name: starbridge
-
-services:
-  bot:
-    build: { context: ., target: runtime }
-    restart: unless-stopped
-    env_file: [.env]
-    environment:
-      STT_URL: http://stt:8000/v1
-      DB_PATH: /data/starbridge.db
-      CONFIG_PATH: /etc/starbridge/fleet.yaml
-    volumes:
-      - ./data:/data
-      - ./config/fleet.yaml:/etc/starbridge/fleet.yaml:ro
-    depends_on:
-      stt: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD", "node", "dist/healthcheck.js"]
-      interval: 30s
-      start_period: 40s
-
-  stt:
-    image: ghcr.io/speaches-ai/speaches:latest-cuda   # pin by digest in prod
-    restart: unless-stopped
-    expose: ["8000"]                                  # never `ports:`
-    volumes: [stt-models:/home/ubuntu/.cache/huggingface]
-    environment:
-      WHISPER__MODEL: Systran/faster-whisper-large-v3  # multilingual, NOT distil
-      WHISPER__LANGUAGE: da
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval: 30s
-      start_period: 120s                              # first boot downloads model
-
-volumes:
-  stt-models:</code></pre>
-<pre><code>docker compose up                       # dev, override auto-loads
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</code></pre>
-  <p>prod overlay: nvidia device reservation (needs <code>nvidia-container-toolkit</code>), cpu/mem limits, json-file rotation. dev overlay: <code>latest-cpu</code> + <code>faster-whisper-tiny</code>, <code>src/</code> mounted, dev fleet tokens.</p>
+  <h2><b>13</b> Testing</h2>
 
   <div class="tw"><table>
-    <thead><tr><th>Constraint</th><th>Reason</th></tr></thead>
+    <thead><tr><th>Tier</th><th>Runs</th><th>Requires Discord?</th><th>Covers</th></tr></thead>
     <tbody>
-      <tr><td><strong>No Alpine</strong> — <code>node:22-bookworm-slim</code></td><td><code>@snazzah/davey</code>, <code>@discordjs/opus</code>, <code>better-sqlite3</code> are native; musl breaks them. Build stage needs <code>build-essential python3</code></td></tr>
-      <tr><td><code>@discordjs/voice</code> pinned <code>^0.19.2</code></td><td>§15 — earlier versions cannot receive at all</td></tr>
-      <tr><td><code>ffmpeg</code> in image</td><td>48k→16k resample</td></tr>
-      <tr><td>No inbound ports</td><td>Voice is outbound UDP to high ports. Strict egress firewall: allow UDP 50000–65535. Never <code>network_mode: none</code></td></tr>
-      <tr><td>Host NTP</td><td>Gateway + DAVE key exchange intolerant of clock skew</td></tr>
-      <tr><td><code>stt</code> unpublished</td><td>Open transcription endpoint is a liability</td></tr>
-      <tr><td><code>data/</code> writable by container user</td><td>WAL needs directory write, not just file</td></tr>
+      <tr><td>Unit / CI</td><td><code>vitest</code></td><td>no</td><td>callsign uniqueness, hail-allocator arithmetic, per-net timer arithmetic, DB migrations idempotent, boot sweep on synthetic state, cue duration validation, SSRC suppression contract</td></tr>
+      <tr><td>Integration</td><td><code>docker compose up</code> against a private test guild</td><td>yes</td><td>vessel create/delete on join-to-create, control panel button flow, hail 2-way + 3-way, ring/accept/decline, per-channel end, 10 s all-quiet close, DAVE receive stays alive across a full session</td></tr>
+      <tr><td>Manual</td><td>two or three trusted testers in the guild</td><td>yes</td><td>real hail flow with real voices, mic-quality resilience, join-chime tolerance in slow-tempo play</td></tr>
     </tbody>
   </table></div>
-  <p><code>fleet drain</code> before deploy. Restart mid-session is survivable via boot sweep but drops the in-flight transmission.</p>
+
+  <p>The step 1 receive spike (<code>src/spike/receive.ts</code>) is retained across the pivot — it is the fastest way to confirm a fresh install can decrypt inbound audio under DAVE. Every other step from draft 0.5's build order is retired; the new build order in §15 supersedes it.</p>
 </section>
 
 <section id="s14">
-  <h2><b>14</b> Testing</h2>
+  <h2><b>14</b> Risks</h2>
+
   <div class="tw"><table>
-    <thead><tr><th>Tier</th><th>Method</th><th>Discord</th><th>Covers</th></tr></thead>
+    <thead><tr><th>Risk</th><th>Where it bites</th><th>Mitigation</th></tr></thead>
     <tbody>
-      <tr><td>Unit / CI</td><td><code>STT_DRIVER=fake</code>, fixture WAVs + canned transcripts</td><td>no</td><td>grammar, matching, slot allocation, teardown timers, boot sweep, SSRC suppression, <strong>state machine + lock contention + cue duration validation</strong></td></tr>
-      <tr><td>Integration</td><td>dev fleet, dedicated test guild, <code>docker compose up</code></td><td>test guild</td><td>voice receive, DAVE, relay audio, overwrites, buttons, moves</td></tr>
-      <tr><td>Danish corpus</td><td>Operator recordings scored on verb + callsign accuracy</td><td>no</td><td>the thing most likely to be wrong</td></tr>
-      <tr><td>Soak</td><td>fleet parked 24 h, sessions cycled</td><td>test guild</td><td>reconnect count, chime-free runtime, no leaked mutes, overwrites or held locks</td></tr>
+      <tr><td>DAVE receive regression on a <code>@discordjs/voice</code> upgrade</td><td>Every relay hail silently loses inbound audio</td><td>Pin <code>^0.19.2</code>; run the step 1 spike after any voice-lib bump before shipping</td></tr>
+      <tr><td>Fleet SSRC leak</td><td>Two bots ever share a channel and each amplifies the other's cues into the hail</td><td>Invariant guard on <code>speaking.start</code>. Unit-tested. v1 allocator never puts two bots in one channel.</td></tr>
+      <tr><td>Channel rename PATCH exhausted</td><td>Owner rapidly toggles Allow-hails / Rename</td><td>Best-effort PATCH, user-facing "try again in ~10 minutes" on 429. No queue.</td></tr>
+      <tr><td>Bot pool exhausted mid-guild</td><td>Multiple simultaneous hails competing for the 3-bot relay pool</td><td>Allocator refuses new hails with <code>Busy</code> back at the caller; <code>/star-comms status</code> shows current utilisation</td></tr>
+      <tr><td>All-quiet close mis-fires</td><td>Owners pause mid-thought &gt; 10 s and the hail drops mid-conversation</td><td>Configurable per guild; audit logs let the operator tune. If it becomes a problem, extend default.</td></tr>
+      <tr><td>Locked-channel accept UX</td><td>Owner is not looking at their voice-text chat and misses the 20 s window</td><td>Documented; if this bites in practice, add a mobile push via slash-command DM as a follow-up</td></tr>
+      <tr><td>Simultaneous-speakers cross-talk</td><td>3+-way hails, two remote owners talk at once, one steps on the other</td><td>Documented in §8. Mixing lands in a follow-up if this shows up in real use.</td></tr>
     </tbody>
   </table></div>
-  <p>Two non-negotiables: recogniser behind a driver interface with a <code>fake</code> impl from commit 1 (else CI needs GPUs and model downloads); <strong>two separate fleets</strong>, dev and prod — shared tokens mean a dev restart pulls bots out of a live op.</p>
-  <p>Danish corpus is the only test asset you cannot buy. Record actual operators, actual channel, actual comms discipline, including the thickest accents. Misses go to <code>alias_variants</code> and stay fixed.</p>
+
+  <div class="call">
+    <span class="lab">STT was tried, then dropped</span>
+    <p>Draft 0.5 targeted a speech-recognised battle-comms product. Testing with <code>Systran/faster-whisper-tiny</code> and then <code>-small</code> against gaming-grade microphones showed ~50 % word-level accuracy on the narrow verb-and-callsign vocabulary — insufficient for reliable routing without an unrealistic model-fine-tuning investment. This spec is the pivot: click-driven hailing with no speech recognition anywhere. STT-related code (VAD, driver, listener, grammar, matcher) has been retired.</p>
+  </div>
 </section>
 
 <section id="s15">
-  <h2><b>15</b> Risks</h2>
-  <div class="tw"><table>
-    <thead><tr><th>Risk</th><th>Sev</th><th>Mitigation</th></tr></thead>
-    <tbody>
-      <tr><td><strong>DAVE churn.</strong> E2EE mandatory on voice channels from 2 Mar 2026, no unencrypted fallback; non-DAVE bots dead. <code>@discordjs/voice</code> 0.19.0–0.19.1 send but cannot decrypt receive (<code>DecryptionFailed(UnencryptedWhenPassthroughDisabled)</code>). Fixed <a href="https://github.com/discordjs/discord.js/pull/11449">13 Mar 2026</a>, shipped <strong>0.19.2</strong></td><td>existential</td><td>Pin <code>^0.19.2</code>. Verify receive on your guild before anything else. Monitor reconnect rate. <code>1.0.0</code> in dev — track</td></tr>
-      <tr><td><strong>Voice receive is undocumented.</strong> DAVE itself is published (whitepaper + <code>libdave</code>); the receive path stays community-maintained</td><td>high</td><td>Accept + monitor. No alternative. discord.py DAVE support still open — Python is not a fallback</td></tr>
-      <tr><td><strong>Fleet feedback loop</strong> (§5)</td><td>high</td><td>Unconditional fleet-SSRC suppression, unit-tested</td></tr>
-      <tr><td><strong>Leaked hard mutes</strong> on crash mid-relay</td><td>high</td><td><code>mute_state</code> written pre-request; boot sweep restores; member ceiling degrades to attenuation</td></tr>
-      <tr><td><strong>Net stuck open.</strong> Lock held after a crash, missed close, or a caller who walks away mid-transmission — blocks every later call to that net</td><td>high</td><td><code>max_hold_ms</code> hard cap, <code>open_timeout_ms</code>, <code>relays.state</code> in the boot sweep, <code>alert</code> preempts, session end force-closes</td></tr>
-      <tr><td><strong>Undeafened squad bot left behind.</strong> A crash during a reply leaves a send-only net receiving audio it has no business receiving — a consent problem, not just a bug</td><td>high</td><td>Boot sweep re-deafens every send-only net. Re-deafen in a <code>finally</code>, never only on the happy path</td></tr>
-      <tr><td><strong>Rejoin chime.</strong> If <code>rejoin()</code> turns out to produce a client-side join sound, every reply announces itself twice</td><td>med</td><td>Verify on the spike. Fallback: leave squad nets undeafened for the session and discard all non-lead audio in-process, at the cost of the stronger consent claim</td></tr>
-      <tr><td><strong>TTS on arbitrary display names.</strong> Emoji, mixed scripts and zero-width characters produce nonsense audio or a hung synthesiser</td><td>med</td><td><code>spoken_names</code> override → sanitise → fall back to the nameless <code>lead_assigned</code> cue. Never block a promotion on synthesis</td></tr>
-      <tr><td><strong>Announcement over a live transmission.</strong> A promotion cue landing on top of an order</td><td>med</td><td>Queue behind the open net; past <code>max_hold_ms</code> drop the audio and keep the text line (§5)</td></tr>
-      <tr><td><strong>Cue duration mismatch.</strong> <code>Attention</code> and <code>Horn</code> unequal, or either ≠ D<sub>c</sub> — first words clipped, and the caller's go-ahead desynchronised from the receivers' alert</td><td>med</td><td>Startup validation per cue set, hard fail. Assets normalised/padded on load</td></tr>
-      <tr><td><strong>First-word clipping</strong> on stream (re)start after idle</td><td>med</td><td>Keep the target stream open with silence frames while <code>OPEN</code>; 200 ms pre-roll on cue assets</td></tr>
-      <tr><td><strong>Channel rename limit</strong> ~2/10 min</td><td>med</td><td>Pool never renames (§4)</td></tr>
-      <tr><td><strong>Danish callsign accuracy</strong></td><td>med</td><td>Closed vocab, hotword bias, learned variants, hard no-route on miss</td></tr>
-      <tr><td><strong>Attenuation is advisory</strong> — per-listener client setting</td><td>low</td><td>Documented; hard mute for groups needing certainty</td></tr>
-      <tr><td><strong>Manual fleet provisioning</strong>, N apps + N intent toggles</td><td>low</td><td>Start at N=3; boot assertion catches missed toggles</td></tr>
-      <tr><td><strong>Recording law</strong></td><td>compliance</td><td>Join notice, no audio persistence, transcripts labelled, guild data purge on unlicense</td></tr>
-    </tbody>
-  </table></div>
+  <h2><b>15</b> Build order</h2>
+
+  <ol>
+    <li><strong>Retire STT.</strong> Delete <code>src/detection/*</code>, remove <code>speaches</code> from compose, drop STT env vars, drop STT-related tests. Fleet manager, cue engine, and audio-relay primitives stay.</li>
+    <li><strong>Rename.</strong> Star Bridge → Star Comms in slash command names, project name, invite text. Env var names (<code>SB_TOKEN_*</code>) are internal and stay as-is.</li>
+    <li><strong>Retire sessions.</strong> Delete <code>src/session/model.ts</code> (netsFor, SessionMode), the current lifecycle-driven <code>/star-bridge open</code>/<code>close</code> flow, and <code>src/session/router.ts</code>. Keep <code>runSessionRelay</code> and generalise it into <code>runHailLeg</code>.</li>
+    <li><strong>Vessels.</strong> <code>voiceStateUpdate</code> listener on the controller. On join-to-create, create channel + move owner + insert <code>vessels</code> row + post control panel. Auto-delete on empty.</li>
+    <li><strong>Callsign registry.</strong> <code>/star-comms register</code>, <code>unregister</code>, <code>callsign</code>. DB uniqueness. No rename side effect.</li>
+    <li><strong>Control panel buttons.</strong> Rename, Lock/Unlock, Limit, Kick. Owner-only handler check. Rate-limit-tolerant PATCH.</li>
+    <li><strong>Hail registry.</strong> Allow-hails / Disable-hails buttons. Rename to 🛰️ callsign on Allow.</li>
+    <li><strong>Hail: 2-way.</strong> Hail button, target multi-select, allocator, cue pair, bidirectional relay between two channels. Per-channel End button. 10 s all-quiet close.</li>
+    <li><strong>Ring + accept/decline.</strong> Locked-channel acceptance UX with the 20 s ring window.</li>
+    <li><strong>Hail: N-way.</strong> Extend the relay to three-plus channels with last-speaker-wins on the outbound side. Documented crosstalk risk.</li>
+    <li><strong>Admin polish.</strong> <code>/star-comms status</code>, <code>drain</code>, <code>hail-registry</code>. Boot sweep of stale state.</li>
+    <li><strong>Prod.</strong> GPU-image removal (no STT sidecar any more), backup cron, drain-before-deploy.</li>
+  </ol>
+
+  <p>Each step is a git commit with tests where testable and a manual verification bar where not. The step 1 receive spike from draft 0.5 stays in the tree and continues to run via <code>npm run spike</code> — it is the fastest smoke test that DAVE receive still works on the current stack.</p>
 </section>
 
 <section id="s16">
-  <h2><b>16</b> Build order</h2>
-  <ol>
-    <li><strong>Receive spike.</strong> One bot, <code>@discordjs/voice@^0.19.2</code>, decrypted per-SSRC PCM off the real guild under DAVE. ~50 lines. Gates everything.</li>
-    <li><strong>Fleet manager.</strong> N tokens parked, resume-preferring reconnect, <code>fleet status</code>. SQLite + boot sweep.</li>
-    <li><strong>Blind relay.</strong> Hard-coded source/target, raw copy, stream held open with silence frames. Measure latency, confirm no runtime chimes and no first-word clipping.</li>
-    <li><strong>Cue engine.</strong> Assets pre-encoded to Opus and cached, duration validation, playback into source and target simultaneously. Testable with a hard-coded call-up.</li>
-    <li><strong>Pool + sessions.</strong> Overwrite provisioning, wizard, lead, teardown, AFK move.</li>
-    <li><strong>Call-up protocol.</strong> VAD, STT driver, grammar parse, callsign matcher, SSRC suppression, per-net state machine, locks, timers.</li>
-    <li><strong>Mirror + acks.</strong> Embeds, buttons, callsign reactions, <code>acks</code>.</li>
-    <li><strong>Leads + reply path.</strong> Promotion picker, announcements, transient undeafening, reverse relay, text replies.</li>
-    <li><strong>Danish.</strong> Locale packs, hotword bias, corpus, variant learning.</li>
-    <li><strong>Admin.</strong> Licensing, install links, allowlist enforcement, stats.</li>
-    <li><strong>Prod.</strong> Compose overlay, GPU, backups, drain-before-deploy.</li>
-  </ol>
-</section>
+  <h2><b>16</b> Future work</h2>
 
-<section id="s17">
-  <h2><b>17</b> Open questions</h2>
-  <p>All 14 questions resolved 20 Aug 2026. The v1 answers below are the source of truth; the affected sections will be rewritten in the next artifact revision to fold these in.</p>
-  <div class="tw"><table>
-    <thead><tr><th>#</th><th>Question</th><th>v1 answer</th><th>Blocks</th></tr></thead>
-    <tbody>
-      <tr><td class="num">1</td><td><s><code>alert</code> vs <code>broadcast</code></s> — <strong>resolved</strong></td><td><code>alert</code>: <code>Horn</code> cue, preempts a held net. <code>broadcast</code>: <code>Attention</code> cue, skips held nets. Danish <code>Attention</code> localises to <em>Giv Agt</em>.</td><td>—</td></tr>
-      <tr><td class="num">2</td><td><s>Callsign namespace flat per guild or per session</s> — <strong>resolved</strong></td><td>Flat per guild. v1 uses named callsigns rather than raw NATO letters. <br>• <strong>Command mode</strong> nets: <code>Command</code>, <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code>. <br>• <strong>Joint operations</strong> nets: <code>Head Ops</code>, <code>Alpha Ops</code>, <code>Bravo Ops</code>, <code>Charlie Ops</code>.</td><td>§3</td></tr>
-      <tr><td class="num">3</td><td><s>Who may trigger a relay</s> — <strong>resolved</strong></td><td>Session owner appoints a lead in every net. The lead in the owner's <em>command</em> net is the <strong>XO</strong> and holds the same speaking rights as the owner — both can hail, command, alert, broadcast. Squad leads may only reply to the command net (see #13).</td><td>§5, §8</td></tr>
-      <tr><td class="num">4</td><td><s>Fleet size at launch</s> — <strong>resolved</strong></td><td>v1 ships <strong>4 applications</strong>: one <strong>main</strong> that both runs the controller (slash commands, channel management) <em>and</em> occupies the command-net voice channel — double duty — plus <code>Alpha</code>, <code>Bravo</code>, <code>Charlie</code> for the squad nets. Fleet expansion is <a href="#s18">future work</a>.</td><td>§2</td></tr>
-      <tr><td class="num">5</td><td><s>da or en procedure words on your nets</s> — <strong>resolved</strong></td><td>Per-guild locale, one setting. Both en and da packs shipped. <a href="#s18">Per-guild cue override</a> is future work.</td><td>§10</td></tr>
-      <tr><td class="num">6</td><td><s>Self-hosted or streaming cloud STT</s> — <strong>resolved</strong></td><td>Local TTS <em>and</em> STT. No cloud dependency in v1.</td><td>§10</td></tr>
-      <tr><td class="num">7</td><td><s><strong>Do squad nets answer by voice?</strong></s> — <strong>resolved</strong></td><td>Yes, but only the lead, and only button-gated. No detection on squad nets, so recognition cost does not scale with total nets.</td><td>—</td></tr>
-      <tr><td class="num">8</td><td><s>D<sub>c</sub> cue length</s> — <strong>resolved</strong></td><td>1200 ms; tune against a real net once real cues are recorded.</td><td>§5</td></tr>
-      <tr><td class="num">9</td><td><s>Cue voices: shipped TTS (Piper da/en) or your own recordings</s> — <strong>resolved</strong></td><td>Ship TTS defaults. Operators drop replacement files at the same paths to override. <a href="#s18">Per-guild cue upload UI</a> is future work.</td><td>§5</td></tr>
-      <tr><td class="num">10</td><td><s><code>Out</code> close cue — wanted, or silence?</s> — <strong>resolved</strong></td><td>Two-part close: caller may say <strong>"Over"</strong> (Danish <em>"Slut"</em>) as a spoken terminator, and net close plays a short <strong>squelch / scratch</strong> SFX (locale-neutral) in both source and target. Replaces the silent close of earlier drafts. Per-guild toggle retained.</td><td>§5</td></tr>
-      <tr><td class="num">11</td><td><s>What powers should a squad lead carry?</s> — <strong>resolved</strong></td><td>The reply channel: only the lead answers the commander. Everyone else gets Acknowledge, and the lead's ack is the authoritative one.</td><td>—</td></tr>
-      <tr><td class="num">12</td><td><s>Is the member's name <em>in the audio</em> worth adding a TTS runtime?</s> — <strong>resolved</strong></td><td>Yes, in the guild's locale. TTS renders member display names for lead-assigned announcements. <a href="#s18">Per-user recorded callsign</a> is future work.</td><td>§5, §10</td></tr>
-      <tr><td class="num">13</td><td><s>Should a lead's reply be relayed to the other squads, or only to the commander?</s> — <strong>resolved</strong></td><td>Commander only — squad nets stay isolated from each other. XO (the command-net lead) carries the same rights as the owner.</td><td>§5</td></tr>
-      <tr><td class="num">14</td><td><s>May the commander revoke a reply mid-transmission?</s> — <strong>resolved</strong></td><td>Terminator behaviour ends the reply naturally. <strong>"Over"</strong> followed by a short pause closes the net; a longer silence (<code>silence_close_ms</code>) closes it without a terminator. <code>max_hold_ms</code> still caps runaway holds. Explicit cut-off is <a href="#s18">future work</a>.</td><td>§5, §8</td></tr>
-    </tbody>
-  </table></div>
-  <p>#7 was the architectural fork and it resolved cheaply. Squad nets do answer by voice, but because the reply is button-gated rather than spoken, squad bots only ever <em>receive</em> — they never <em>detect</em>. STT stays proportional to command nets. The cost the question warned about does not materialise.</p>
-</section>
-
-<section id="s18">
-  <h2><b>18</b> Future work</h2>
-  <p>Deferred from the 20 Aug 2026 resolutions. Not blocking v1 and not on the §16 build order. Recorded here so a future me does not have to re-derive them from chat.</p>
   <div class="tw"><table>
     <thead><tr><th>Idea</th><th>Motivation</th><th>Shape sketch</th></tr></thead>
     <tbody>
       <tr>
-        <td><strong>Fleet expansion beyond 4</strong></td>
-        <td>v1 ships main + Alpha/Bravo/Charlie. Larger operations want more squads or nested command nets.</td>
-        <td>Add a fifth callsign pack. Naming stays letter-based in command mode; joint-ops mode extends the <code>-Ops</code> suffix. Fleet-size lift in §2 requires per-guild admin controls (guild owner cannot register apps).</td>
+        <td><strong>N-way mixing</strong></td>
+        <td>Simultaneous remote speakers step on each other in the 3+-way case (§8)</td>
+        <td>Decode each inbound opus to PCM per receiving bot, sum with clip protection, re-encode to opus. ~10 ms CPU per active speaker per receiving side. Same audio graph as v1, extra node in the middle.</td>
       </tr>
       <tr>
-        <td><strong>Per-guild cue overrides</strong></td>
-        <td>Operators want to sound different from the default TTS voices. Currently they can only replace files on disk in the container.</td>
-        <td>Slash-command upload flow: <code>/star-bridge cue set attention &lt;wav&gt;</code>. Server validates duration matches D<sub>c</sub>, stores to <code>data/cues/&lt;guild_id&gt;/</code>, adds a <code>cue_assets</code> row. Fails loud on duration mismatch — same rule as boot-time validation (§5).</td>
+        <td><strong>Push-to-talk toggle in the control panel</strong></td>
+        <td>Owners with sensitive microphones want to control when their voice reaches the hail</td>
+        <td>Extra button. Off = bot ignores owner's SSRC; On = bot forwards. Independent per hail leg.</td>
       </tr>
       <tr>
-        <td><strong>Per-user recorded callsign</strong></td>
-        <td>TTS name pronunciation is variable, especially for Danish names in the en pack. A member should be able to record their own name.</td>
-        <td>Slash command <code>/star-bridge callsign record</code> opens a two-way voice interaction: the bot listens for one short utterance, encodes it to Opus, stores it against the (guild, user) pair. The announcement path prefers the recorded audio, falls back to TTS.</td>
+        <td><strong>Mobile push on ring</strong></td>
+        <td>Owner not looking at voice-text chat misses the 20 s locked-channel accept window</td>
+        <td>Slash-command DM ping to the target's owner on ring start. Discord will notify their client-side; the accept/decline buttons live in the DM as well as the voice-text chat.</td>
       </tr>
       <tr>
-        <td><strong>Explicit reply cut-off</strong></td>
-        <td>#14 v1 answer is "no explicit cut-off, silence timeout is the natural end." A future commander who wants a hard stop button will need one.</td>
-        <td><strong>Preempt</strong> button on the mirror embed for the owner and XO; presses close the reply with <code>Out</code> cue and posts a "cut off by &lt;name&gt;" note. Reuses the alert-preempt path (§5).</td>
+        <td><strong>Persistent hail groups</strong></td>
+        <td>The same three ships hail together every session; picking them from a multi-select each time is tedious</td>
+        <td><code>/star-comms group create</code> saves a target list under a name. Hail button offers a "hail group X" shortcut.</td>
       </tr>
       <tr>
-        <td><strong>Transfer ownership</strong></td>
-        <td>Session owner may need to hand off mid-session — comms failure, shift change, or delegation.</td>
-        <td>Button in the command-channel mirror embed that only the current owner can press. Opens a member picker; confirmed target must be present in the command net. Recorded to <code>audit</code>; new owner's name announced in-net.</td>
+        <td><strong>Hail broadcast to all hail-enabled</strong></td>
+        <td>A guild-wide announcement — the operator wants every hail-enabled channel to receive one-way audio for a minute</td>
+        <td>Special mode: allocator grabs every free relay bot, joins them all, plays one Attention cue, opens one-way relay from initiator to all. No return path.</td>
+      </tr>
+      <tr>
+        <td><strong>Guild-level cue overrides</strong></td>
+        <td>Operators want their own voice packs</td>
+        <td>Slash-command upload flow that validates duration and stores in <code>cue_assets</code>. Same equal-duration rule as boot-time validation.</td>
+      </tr>
+      <tr>
+        <td><strong>Ownership transfer</strong></td>
+        <td>Owner disconnects mid-hail; crew wants to keep the vessel alive</td>
+        <td>Control-panel button offering the crew member a transfer prompt. Requires new DB semantics for ownership succession.</td>
       </tr>
     </tbody>
   </table></div>
 </section>
 
 <hr class="rule-end">
-<p class="foot">Draft 0.5, 20 Aug 2026. Verified against <code>@discordjs/voice</code> 0.19.2 (current stable) and DAVE enforcement of 2 Mar 2026. Re-check §15 version claims before build.</p>
+<p class="foot">Spec 1.0, 21 Aug 2026. Star Comms replaces Star Bridge draft 0.5. Verified against <code>@discordjs/voice</code> 0.19.2 and DAVE enforcement (2 Mar 2026). Re-check §14 pins before any dependency bump.</p>
 
 </div>
 
