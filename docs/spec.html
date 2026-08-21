@@ -159,7 +159,7 @@
 
   <p><em>Star Comms</em> is a Discord bot fleet that opens brief, cue-signalled voice-to-voice bridges between separate voice channels in one guild. It is aimed at slow-tempo cooperative play — industrial gameplay, exploration, coordination between wings, station comms — where the participants sit in their own channels and occasionally need to talk to another channel's owner without either party leaving their own voice channel.</p>
 
-  <p>This is <strong>Spec 1.0</strong>, a rewrite of the earlier draft 0.5 which targeted a speech-recognised battle-comms product. Real-world STT quality against gaming-grade microphones and background audio proved inadequate for reliable routing (see §14). The design was pivoted to <em>click-driven hailing</em>: a channel owner presses a button, the bot picks a target from a directory of hailable channels, and audio flows both ways for as long as anyone talks.</p>
+  <p>A channel owner presses a button, the bot picks a target from a directory of hailable channels, and audio flows both ways for as long as anyone talks. No speech recognition anywhere; every action is user-initiated through slash commands or button clicks.</p>
 
   <h4>In</h4>
   <ul>
@@ -211,11 +211,11 @@
     <p>No Discord API creates applications. Each app is hand-registered in the developer portal with the SERVER MEMBERS privileged intent enabled. Tokens are shown once.</p>
   </div>
 
-  <p>Bots are permanent Discord identities but transient voice-channel occupants: they connect their gateway on process start, log in, and stay parked <em>outside</em> voice until allocated to a hail leg. On hail close they leave voice. This is opposite to the older draft 0.5 design where bots sat in voice channels all the time; here voice-join is a per-hail event.</p>
+  <p>Bots are permanent Discord identities but transient voice-channel occupants: they connect their gateway on process start, log in, and stay parked <em>outside</em> voice until allocated to a hail leg. On hail close they leave voice.</p>
 
   <div class="call">
     <span class="lab">Join chime is acceptable</span>
-    <p>Discord's client plays a join chime when a bot enters a voice channel. In slow-tempo comms this is fine — hails are minutes apart, not seconds — and the chime is a useful audible cue that a hail is opening even before the <code>Ring</code>/<code>Attention</code> cue plays. Session-resume tricks used in the earlier design are unnecessary.</p>
+    <p>Discord's client plays a join chime when a bot enters a voice channel. In slow-tempo comms this is fine — hails are minutes apart, not seconds — and the chime is a useful audible cue that a hail is opening even before the <code>Ring</code>/<code>Attention</code> cue plays.</p>
   </div>
 </section>
 
@@ -380,8 +380,6 @@
 
   <p>Cue sets are per guild (shipped defaults or operator-supplied WAVs). All time-critical assets — <code>Ready</code>, <code>Attention</code>, <code>Ring</code> — must be equal length D<sub>c</sub>; startup validates this and fails loudly on mismatch, because the caller's <code>Ready</code> and each target's <code>Attention</code>/<code>Ring</code> start on the same instant and their end defines when the message body can start.</p>
 
-  <p>The old draft 0.5 <code>Horn</code>, <code>Negative</code> and squad-callsign cues are dropped: their spec-§5 triggers (alert-mode preemption, callsign mismatch) do not exist in Star Comms.</p>
-
   <h4>Timers</h4>
 
   <div class="tw"><table>
@@ -457,7 +455,6 @@
 <pre><code>-- guilds
 guilds(id PK, name, added_at, added_by,
        join_to_create_channel_id,
-       ops_channel_id,
        locale,
        cue_set, cue_duration_ms,
        ring_interval_ms, ring_max_ms,
@@ -562,7 +559,7 @@ Dockerfile                    # multi-stage, Debian slim
     </tbody>
   </table></div>
 
-  <p>The step 1 receive spike (<code>src/spike/receive.ts</code>) is retained across the pivot — it is the fastest way to confirm a fresh install can decrypt inbound audio under DAVE. Every other step from draft 0.5's build order is retired; the new build order in §15 supersedes it.</p>
+  <p>The receive spike at <code>src/spike/receive.ts</code> (<code>npm run spike</code>) is the fastest way to confirm a fresh install can decrypt inbound audio under DAVE. Run it on any host after a <code>@discordjs/voice</code> or <code>@snazzah/davey</code> version bump before shipping.</p>
 </section>
 
 <section id="s14">
@@ -571,7 +568,7 @@ Dockerfile                    # multi-stage, Debian slim
   <div class="tw"><table>
     <thead><tr><th>Risk</th><th>Where it bites</th><th>Mitigation</th></tr></thead>
     <tbody>
-      <tr><td>DAVE receive regression on a <code>@discordjs/voice</code> upgrade</td><td>Every relay hail silently loses inbound audio</td><td>Pin <code>^0.19.2</code>; run the step 1 spike after any voice-lib bump before shipping</td></tr>
+      <tr><td>DAVE receive regression on a <code>@discordjs/voice</code> upgrade</td><td>Every relay hail silently loses inbound audio</td><td>Pin <code>^0.19.2</code>; run <code>npm run spike</code> after any voice-lib bump before shipping</td></tr>
       <tr><td>Fleet SSRC leak</td><td>Two bots ever share a channel and each amplifies the other's cues into the hail</td><td>Invariant guard on <code>speaking.start</code>. Unit-tested. v1 allocator never puts two bots in one channel.</td></tr>
       <tr><td>Channel rename PATCH exhausted</td><td>Owner rapidly toggles Allow-hails / Rename</td><td>Best-effort PATCH, user-facing "try again in ~10 minutes" on 429. No queue.</td></tr>
       <tr><td>Bot pool exhausted mid-guild</td><td>Multiple simultaneous hails competing for the 3-bot relay pool</td><td>Allocator refuses new hails with <code>Busy</code> back at the caller; <code>/star-comms status</code> shows current utilisation</td></tr>
@@ -580,20 +577,13 @@ Dockerfile                    # multi-stage, Debian slim
       <tr><td>Simultaneous-speakers cross-talk</td><td>3+-way hails, two remote owners talk at once, one steps on the other</td><td>Documented in §8. Mixing lands in a follow-up if this shows up in real use.</td></tr>
     </tbody>
   </table></div>
-
-  <div class="call">
-    <span class="lab">STT was tried, then dropped</span>
-    <p>Draft 0.5 targeted a speech-recognised battle-comms product. Testing with <code>Systran/faster-whisper-tiny</code> and then <code>-small</code> against gaming-grade microphones showed ~50 % word-level accuracy on the narrow verb-and-callsign vocabulary — insufficient for reliable routing without an unrealistic model-fine-tuning investment. This spec is the pivot: click-driven hailing with no speech recognition anywhere. STT-related code (VAD, driver, listener, grammar, matcher) has been retired.</p>
-  </div>
 </section>
 
 <section id="s15">
   <h2><b>15</b> Build order</h2>
 
   <ol>
-    <li><strong>Retire STT.</strong> Delete <code>src/detection/*</code>, remove <code>speaches</code> from compose, drop STT env vars, drop STT-related tests. Fleet manager, cue engine, and audio-relay primitives stay.</li>
-    <li><strong>Rename.</strong> Star Bridge → Star Comms in slash command names, project name, invite text. Env var names (<code>SB_TOKEN_*</code>) are internal and stay as-is.</li>
-    <li><strong>Retire sessions.</strong> Delete <code>src/session/model.ts</code> (netsFor, SessionMode), the current lifecycle-driven <code>/star-bridge open</code>/<code>close</code> flow, and <code>src/session/router.ts</code>. Keep <code>runSessionRelay</code> and generalise it into <code>runHailLeg</code>.</li>
+    <li><strong>Clean legacy code.</strong> Prune modules that do not serve this design (<code>src/detection/</code>, <code>src/session/model.ts</code>, <code>src/session/router.ts</code>, the pre-existing session-oriented slash surface). Rename every identifier to the <code>star-comms</code> namespace — slash commands, project name, invite text; the internal <code>SB_TOKEN_*</code> env var names stay as-is. Retain the fleet manager, cue engine, the DAVE-receive spike, and the audio-relay primitive (generalised into <code>runHailLeg</code> in step 6).</li>
     <li><strong>Vessels.</strong> <code>voiceStateUpdate</code> listener on the controller. On join-to-create, create channel + move owner + insert <code>vessels</code> row + post control panel. Auto-delete on empty.</li>
     <li><strong>Callsign registry.</strong> <code>/star-comms register</code>, <code>unregister</code>, <code>callsign</code>. DB uniqueness. No rename side effect.</li>
     <li><strong>Control panel buttons.</strong> Rename, Lock/Unlock, Limit, Kick. Owner-only handler check. Rate-limit-tolerant PATCH.</li>
@@ -602,10 +592,10 @@ Dockerfile                    # multi-stage, Debian slim
     <li><strong>Ring + accept/decline.</strong> Locked-channel acceptance UX with the 20 s ring window.</li>
     <li><strong>Hail: N-way.</strong> Extend the relay to three-plus channels with last-speaker-wins on the outbound side. Documented crosstalk risk.</li>
     <li><strong>Admin polish.</strong> <code>/star-comms status</code>, <code>drain</code>, <code>hail-registry</code>. Boot sweep of stale state.</li>
-    <li><strong>Prod.</strong> GPU-image removal (no STT sidecar any more), backup cron, drain-before-deploy.</li>
+    <li><strong>Prod.</strong> Pinned image, backup cron, drain-before-deploy.</li>
   </ol>
 
-  <p>Each step is a git commit with tests where testable and a manual verification bar where not. The step 1 receive spike from draft 0.5 stays in the tree and continues to run via <code>npm run spike</code> — it is the fastest smoke test that DAVE receive still works on the current stack.</p>
+  <p>Each step is a git commit with tests where testable and a manual verification bar where not. The DAVE-receive spike (<code>npm run spike</code>) remains the fastest smoke test that inbound audio still decrypts on the current stack.</p>
 </section>
 
 <section id="s16">
@@ -654,7 +644,7 @@ Dockerfile                    # multi-stage, Debian slim
 </section>
 
 <hr class="rule-end">
-<p class="foot">Spec 1.0, 21 Aug 2026. Star Comms replaces Star Bridge draft 0.5. Verified against <code>@discordjs/voice</code> 0.19.2 and DAVE enforcement (2 Mar 2026). Re-check §14 pins before any dependency bump.</p>
+<p class="foot">Spec 1.0, 21 Aug 2026. Verified against <code>@discordjs/voice</code> 0.19.2 and DAVE enforcement (2 Mar 2026). Re-check §14 pins before any dependency bump.</p>
 
 </div>
 
