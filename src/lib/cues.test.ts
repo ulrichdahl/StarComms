@@ -49,26 +49,22 @@ function mkPaths(dir: string, durations: Partial<Record<string, number>> = {}): 
 }
 
 skip('loadCueSet', () => {
-  it('loads all six cues at the expected duration', async () => {
+  it('loads all five cues at the expected duration', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cues-'));
     dirs.push(dir);
     const set = await loadCueSet(mkPaths(dir), 1200);
-    expect(set.summary()).toHaveLength(6);
+    expect(set.summary()).toHaveLength(5);
     for (const c of set.summary()) {
-      // 2 opus frames of tolerance means anything from 1160 to 1240 ms is fine.
       expect(c.durationMs).toBeGreaterThanOrEqual(1160);
       expect(c.durationMs).toBeLessThanOrEqual(1240);
       expect(c.packets).toBeGreaterThan(0);
     }
   }, 30_000);
 
-  // §5 hard constraint. Ready, attention and horn must be equal length or
-  // the caller's go-ahead ends before the receivers' alert ends, and the
-  // first word clips on every transmission. Loose cues get a wider band.
+  // Ready and attention play concurrently and must end together.
   it('rejects a strict-set cue whose duration exceeds the strict tolerance', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cues-'));
     dirs.push(dir);
-    // 1400 ms attention against a 1200 ms target is 200 ms out — well past 40 ms.
     const paths = mkPaths(dir, { attention: 1.4 });
     await expect(loadCueSet(paths, 1200)).rejects.toBeInstanceOf(CueLoadError);
   }, 30_000);
@@ -76,7 +72,7 @@ skip('loadCueSet', () => {
   it('accepts a loose-set cue at 100 ms drift (within loose tolerance)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cues-'));
     dirs.push(dir);
-    // busy at 1300 ms — 100 ms out, still under the loose 200 ms band.
+    // busy at 1300 ms — 100 ms out, under the loose 200 ms band.
     const paths = mkPaths(dir, { busy: 1.3 });
     const set = await loadCueSet(paths, 1200);
     expect(set.get('busy').durationMs).toBeGreaterThan(1200);
@@ -84,8 +80,7 @@ skip('loadCueSet', () => {
 
   it('rejects a missing file with a clear error', async () => {
     const paths: CuePaths = {
-      ready: '/nonexistent/ready.wav', attention: 'x', horn: 'x',
-      negative: 'x', busy: 'x', out: 'x',
+      ready: '/nonexistent/ready.wav', attention: 'x', ring: 'x', busy: 'x', end: 'x',
     };
     await expect(loadCueSet(paths, 1200)).rejects.toThrow(/file not found|ready/);
   });
@@ -117,24 +112,18 @@ describe('resolveCuePaths', () => {
         en: {
           ready: 'cues/en/ready.wav',
           attention: 'cues/en/attention.wav',
-          negative: 'cues/en/negative.wav',
           busy: 'cues/en/busy.wav',
         },
         shared: {
-          horn: 'cues/horn.wav',
-          out: 'cues/out.wav',
+          ring: 'cues/ring.wav',
+          end: 'cues/end.wav',
         },
       },
     },
   };
 
   it('resolves relative paths against the yaml file directory when they exist there', () => {
-    // fleet.example.yaml lives at config/fleet.example.yaml and the shipped
-    // cues live at repo/cues — from config/'s POV cues/en/ready.wav does not
-    // exist yaml-relative, so the loader falls back to cwd. Test both branches.
-    const paths = resolveCuePaths(raw, 'default', 'en', '/etc/starbridge/fleet.yaml');
-    // Absolute — non-existent yaml-relative falls back to cwd, so we assert
-    // shape rather than exact string.
+    const paths = resolveCuePaths(raw, 'default', 'en', '/etc/starcomms/fleet.yaml');
     expect(paths.ready).toMatch(/cues\/en\/ready\.wav$/);
   });
 
@@ -145,19 +134,19 @@ describe('resolveCuePaths', () => {
           en: {
             ready: '/absolute/ready.wav',
             attention: '/absolute/attention.wav',
-            negative: '/absolute/negative.wav',
             busy: '/absolute/busy.wav',
           },
           shared: {
-            horn: '/absolute/horn.wav',
-            out: '/absolute/out.wav',
+            ring: '/absolute/ring.wav',
+            end: '/absolute/end.wav',
           },
         },
       },
     };
-    const paths = resolveCuePaths(abs, 'default', 'en', '/etc/starbridge/fleet.yaml');
+    const paths = resolveCuePaths(abs, 'default', 'en', '/etc/starcomms/fleet.yaml');
     expect(paths.ready).toBe('/absolute/ready.wav');
-    expect(paths.horn).toBe('/absolute/horn.wav');
+    expect(paths.ring).toBe('/absolute/ring.wav');
+    expect(paths.end).toBe('/absolute/end.wav');
   });
 
   it('fails when the cue set is missing', () => {
@@ -168,16 +157,16 @@ describe('resolveCuePaths', () => {
     expect(() => resolveCuePaths(raw, 'default', 'fr', 'config/fleet.yaml')).toThrow(/fr missing/);
   });
 
-  it('fails when a strict-trio cue path is missing', () => {
+  it('fails when a shared cue path is missing', () => {
     const partial = {
       cue_sets: {
         default: {
-          en: { ready: 'x.wav', attention: 'x.wav', negative: 'x.wav', busy: 'x.wav' },
-          shared: { out: 'x.wav' /* horn missing */ },
+          en: { ready: 'x.wav', attention: 'x.wav', busy: 'x.wav' },
+          shared: { end: 'x.wav' /* ring missing */ },
         },
       },
     };
-    expect(() => resolveCuePaths(partial, 'default', 'en', 'config/fleet.yaml')).toThrow(/horn/);
+    expect(() => resolveCuePaths(partial, 'default', 'en', 'config/fleet.yaml')).toThrow(/ring/);
   });
 });
 

@@ -1,4 +1,4 @@
-name: starbridge
+name: starcomms
 
 services:
   bot:
@@ -11,29 +11,17 @@ services:
       - path: .env
         required: false
     environment:
-      DB_PATH: /data/starbridge.db
-      CONFIG_PATH: /etc/starbridge/fleet.yaml
+      DB_PATH: /data/starcomms.db
+      CONFIG_PATH: /etc/starcomms/fleet.yaml
       STATUS_PORT: "3000"
-      # Preserved for step 1 spike diagnostics.
+      # Preserved for the step-1 receive spike diagnostics.
       SPIKE_PORT: "3000"
-      # Step 3 blind relay: unset by default. Populate in .env to enable.
-      RELAY_SOURCE_CHANNEL_ID: ${RELAY_SOURCE_CHANNEL_ID:-}
-      RELAY_TARGET_CHANNEL_ID: ${RELAY_TARGET_CHANNEL_ID:-}
-      # Step 6a STT: point at the stt profile's sidecar. When STT_DRIVER
-      # is 'fake' this is ignored; when 'whisper_local' the bot probes
-      # this URL at boot and falls back to fake if unreachable.
-      STT_DRIVER: ${STT_DRIVER:-fake}
-      STT_FAKE_RESPONSE: ${STT_FAKE_RESPONSE:-command alpha}
-      STT_URL: ${STT_URL:-http://stt:8000/v1}
-      STT_MODEL: ${STT_MODEL:-}
-      STT_LANGUAGE: ${STT_LANGUAGE:-}
-      STT_PROMPT: ${STT_PROMPT:-}
     volumes:
       # Persistence, host-mounted. Must be writable by uid 1000 (the node user).
       - ./data:/data
       # Whole directory, so a missing fleet.yaml does not break `up`.
-      - ./config:/etc/starbridge:ro
-      - ./cues:/etc/starbridge/cues:ro
+      - ./config:/etc/starcomms:ro
+      - ./cues:/app/cues:ro
     # No `ports:` — Discord voice is outbound UDP only and /healthz is internal.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
@@ -41,25 +29,3 @@ services:
       timeout: 5s
       start_period: 40s
       retries: 3
-
-  # Not needed until step 5. Behind a profile so the spike does not pull a
-  # multi-gigabyte CUDA image: `docker compose --profile stt up`.
-  stt:
-    profiles: ["stt"]
-    image: ghcr.io/speaches-ai/speaches:latest-cuda   # pin by digest in prod
-    restart: unless-stopped
-    expose: ["8000"]
-    volumes:
-      - stt-models:/home/ubuntu/.cache/huggingface
-    environment:
-      # Multilingual. NOT a distil model — those are English-only. Spec §10.
-      WHISPER__MODEL: Systran/faster-whisper-large-v3
-      WHISPER__LANGUAGE: da
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval: 30s
-      start_period: 120s
-      retries: 5
-
-volumes:
-  stt-models:

@@ -1,8 +1,8 @@
 {
-  "name": "star-bridge",
+  "name": "star-comms",
   "version": "0.0.1",
   "private": true,
-  "description": "Speech-routed Discord voice relay for fleet operations",
+  "description": "Click-driven Discord voice-channel bridge for cooperative gameplay",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

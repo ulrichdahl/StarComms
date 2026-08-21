@@ -7,7 +7,7 @@ import { openDb } from './db.js';
 const dirs: string[] = [];
 
 function tmpDbPath(): string {
-  const d = mkdtempSync(join(tmpdir(), 'starbridge-db-'));
+  const d = mkdtempSync(join(tmpdir(), 'starcomms-db-'));
   dirs.push(d);
   return join(d, 'test.db');
 }
@@ -17,21 +17,37 @@ afterEach(() => {
 });
 
 describe('openDb', () => {
-  it('creates every §11 table', () => {
+  it('creates every §10 table', () => {
     const db = openDb(':memory:');
     const rows = db.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
     ).all() as { name: string }[];
     const names = new Set(rows.map((r) => r.name));
     for (const t of [
-      'guilds', 'bots', 'guild_bots', 'channel_pool',
-      'cue_sets', 'cue_assets',
+      'guilds', 'bots',
+      'callsigns', 'vessels', 'hail_registry',
+      'active_hails', 'hail_participants', 'hail_events',
+      'audit', 'cue_sets', 'cue_assets',
+    ]) {
+      expect(names).toContain(t);
+    }
+    db.close();
+  });
+
+  it('drops the legacy tables from earlier iterations', () => {
+    const db = openDb(':memory:');
+    const rows = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+    ).all() as { name: string }[];
+    const names = new Set(rows.map((r) => r.name));
+    for (const t of [
+      'guild_bots', 'channel_pool',
       'sessions', 'session_nets',
       'relays', 'relay_targets', 'acks',
       'alias_variants', 'misses',
-      'mute_state', 'usage_daily', 'audit',
+      'mute_state', 'usage_daily',
     ]) {
-      expect(names).toContain(t);
+      expect(names).not.toContain(t);
     }
     db.close();
   });
@@ -54,7 +70,7 @@ describe('openDb', () => {
   });
 
   it('creates the parent directory if it does not exist', () => {
-    const d = mkdtempSync(join(tmpdir(), 'starbridge-db-'));
+    const d = mkdtempSync(join(tmpdir(), 'starcomms-db-'));
     dirs.push(d);
     const path = join(d, 'nested', 'more', 'test.db');
     const db = openDb(path);

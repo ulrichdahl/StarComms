@@ -1,5 +1,5 @@
 /**
- * Star Bridge — step 1 receive spike (spec §16.1).
+ * Star Comms — DAVE receive spike (retained across the pivot as smoke test).
  *
  * Single purpose: prove that this bot can obtain DECRYPTED, PER-SPEAKER PCM
  * from a real guild voice channel under Discord's mandatory DAVE end-to-end

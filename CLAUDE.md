@@ -1,112 +1,120 @@
-# Star Bridge
+# Star Comms
 
-Speech-routed Discord voice relay. A commander speaks a call-up on a command
-net; a fleet of bots opens the addressed net, plays confirmation cues, and
-relays the message audio live.
+Click-driven Discord voice-channel bridge for cooperative gameplay. A
+channel owner presses a button, the bot picks a target from a directory
+of hailable channels, and audio flows both ways for as long as anyone
+talks.
 
-**The specification is `docs/spec.html`.** Read it before changing behaviour —
-it is the contract, and most of the non-obvious constraints are recorded there
-with their reasons.
+**The specification is `docs/spec.html`.** Read it before changing
+behaviour — it is the contract, and the non-obvious constraints are
+recorded there with their reasons.
 
-## Divergence from spec — the 4-bot layout
+## Fleet layout
 
-The spec (§2) puts the controller role on member Alfa — same application both
-registers slash commands AND holds a squad net. This project uses a **separate
-controller application on double duty**: it runs slash commands + channel
-management AND occupies the main command net's voice channel.
+v1 ships with **4 Discord applications**:
 
-- **Main / controller**: registers `/star-bridge`, holds `MANAGE_CHANNELS`,
-  `MANAGE_ROLES`, `MOVE_MEMBERS`, `MUTE_MEMBERS`. Joins voice on **the
-  command net** (mode: `command`) or **head-ops net** (mode: `joint`)
-  when a session opens.
-- **Squad**: alfa, bravo, charlie. Each joins its assigned squad net for
-  the duration of the session. None is a controller.
+- **Controller** — registers `/star-comms`, creates + moves vessels via
+  the join-to-create trigger, holds `MANAGE_CHANNELS`, `MANAGE_ROLES`,
+  `MOVE_MEMBERS`. Never joins voice.
+- **Relays** (alfa / bravo / charlie) — pool of voice bots allocated to
+  channels as hails require. Each holds `CONNECT`, `SPEAK`,
+  `PRIORITY_SPEAKER`. Join on hail open, leave on hail close.
 
-Total applications in v1: **4** (main + 3 squad). This matches the step 1
-spike bot naturally becoming the main. Anywhere the spec's §2 text says
-"member Alfa is controller", read "the main application is controller and
-occupies the command net". `bots.is_controller = 1` for the main; squad
-rows have `is_controller = 0`.
-
-## Divergence from spec — per-session channel creation
-
-Superseding §4 of the spec draft ("hidden pool of N voice channels revealed
-by permission overwrites"): voice channels are **created per session** and
-deleted at teardown. Only the category and a single control text channel
-are created at `/star-bridge init` time. Rationale: the ~2 rename per 10 min
-PATCH limit only bit the pool design when it also renamed; per-session
-create/delete uses a different, looser bucket and gives a cleaner sidebar.
-The `channel_pool` table in §11 stays in the schema but is not populated
-in v1.
+The 4-app total supports up to 3 channels-in-hail concurrently in one
+guild. If v2 needs 4, the controller becomes pool-eligible.
 
 ## Hard constraints — violating these breaks the product
 
-- `@discordjs/voice` pinned `^0.19.2`. 0.19.0 and 0.19.1 cannot decrypt received
-  audio under mandatory DAVE E2EE. Never relax this pin. (§15)
-- **Debian base images, never Alpine.** `@snazzah/davey`, `@discordjs/opus` and
-  `better-sqlite3` are native; musl breaks them. (§13)
-- **Drop all audio from fleet user IDs before detection**, unconditionally, in
-  both modes. Without it a relayed cue re-triggers routing and the fleet talks
-  to itself. Highest-consequence bug available. (§5)
-- **Never write audio to disk.** Transcripts persist; audio does not. (§1)
-- **Never rename a channel.** Channel name/topic PATCH is limited to ~2 per
-  10 minutes. Provisioning is permission overwrites on a pre-created pool. (§4)
-- **Never leave a human muted.** Hard-mute state is written to `mute_state`
-  before the first mute request so the boot sweep can restore it. (§6)
-- Cue assets must be equal length and validated at startup. (§5)
-- `selfDeaf` on send-only squad nets only. Never `selfMute` — every listening
-  bot must be able to play cues. (§3, §6)
-- **Every `joinVoiceChannel` call must set `group` to a value unique per bot**
-  (we use the joining client's `user.id`). `@discordjs/voice` keys connections
-  by `(guildId, group)` with default `'default'`; without per-bot scoping a
-  second bot's join rebinds the first bot's connection to the new channel and
-  the second bot never actually joins. This bit us in step 3 — bravo appeared
-  in the target channel and charlie never connected, with both `entersState`
-  calls resolving Ready against the same shared connection.
+Retained across the pivot from earlier iterations because they are
+consequences of Discord's protocol and `@discordjs/voice`'s API, not of
+the previous product's design.
+
+- `@discordjs/voice` pinned `^0.19.2`. 0.19.0 and 0.19.1 cannot decrypt
+  received audio under mandatory DAVE E2EE. Never relax this pin.
+- **Debian base images, never Alpine.** `@snazzah/davey`,
+  `@discordjs/opus` and `better-sqlite3` are native; musl breaks them.
+- **Drop all audio from fleet user IDs before any downstream consumer**,
+  unconditionally. Without it a played cue re-triggers `speaking.start`
+  on the same connection and the fleet talks to itself. Highest-
+  consequence bug available.
+- **Never write audio to disk.** Audit records persist; audio does not.
+- Cue assets `ready` and `attention` must be equal length D<sub>c</sub>
+  and are validated at startup — they play concurrently across channels
+  and must end together or the first word clips.
+- **Never `selfMute`** on any voice connection — every relay bot must
+  be able to play cues. Set `selfDeaf: false` too since v1 relays are
+  bidirectional.
+- **Every `joinVoiceChannel` call must set `group` to a value unique
+  per bot** (we use the joining client's `user.id`). `@discordjs/voice`
+  keys connections by `(guildId, group)` with default `'default'`;
+  without per-bot scoping a second bot's join rebinds the first bot's
+  connection to the new channel and the second bot never actually
+  joins.
+- **`adapterCreator` must be built from the joining bot's own `Guild`
+  object.** `guild.voiceAdapterCreator` binds to the WebSocket of
+  whichever Client cached that Guild. Taking the guild from the
+  interaction (controller's Client) and passing its adapter to a relay
+  bot's join causes the relay's gateway `VOICE_STATE_UPDATE` to reach
+  the relay's WebSocket with nothing listening — the connection times
+  out with "The operation was aborted". Always resolve the joining
+  bot's own guild view (`client.guilds.cache.get(guildId)`, fetch if
+  empty) and use *that* adapter.
 - **Any `AudioPlayer` fed from a `receiver.subscribe` stream must set
   `behaviors.maxMissedFrames: Infinity`.** The default is 5. During a
-  natural inter-word pause the receive stream's `.read()` returns null for
-  more than 5 consecutive 20 ms frames, and the player abandons the
-  resource even though the stream is still alive — the caller then hears
-  a couple of seconds of audio and permanent silence. Cue playback keeps
-  the default 5 (finite resources should not be immortal). This bit us in
-  step 6a's hail: 2080 ms of audio, then Idle, then max-hold timed out.
-- **Every `AudioPlayer` and receive `opusStream` in the receive path must
-  have an `'error'` listener.** DAVE decryption occasionally fails at
-  key-rotation boundaries (`DecryptionFailed(UnencryptedWhenPassthroughDisabled)`,
-  spec §15), and the error propagates from `AudioReceiveStream` →
-  `AudioResource` → `AudioPlayer`. An unhandled `'error'` on any of those
-  crashes the whole Node process with `Unhandled 'error' event`. Swallow
-  the DAVE-specific message and continue — the next packet decrypts fine.
-  Log anything else. This bit us in step 6a during a live hail after ~1.2 s
-  of audio had already transmitted.
-- **`adapterCreator` must be built from the joining bot's own `Guild` object.**
-  `guild.voiceAdapterCreator` binds to the WebSocket of whichever Client cached
-  that Guild. If we take the guild from the interaction (controller's Client)
-  and pass its adapter to alfa's join, alfa's gateway `VOICE_STATE_UPDATE`
-  reaches alfa's WebSocket but nothing is listening — the connection times out
-  with "The operation was aborted". Always resolve the joining bot's own guild
-  view (`client.guilds.cache.get(guildId)`, fetch if empty) and use *that*
-  adapter. This bit us in step 5b for main + alfa — the two bots that were not
-  already voice-connected from earlier steps.
+  natural inter-word pause the receive stream's `.read()` returns null
+  for more than 5 consecutive 20 ms frames, and the player abandons the
+  resource even though the stream is still alive. Cue-playback players
+  keep the default 5 (finite resources should not be immortal).
+- **Every `AudioPlayer` and receive `opusStream` in the receive path
+  must have an `'error'` listener.** DAVE decryption occasionally fails
+  at key-rotation boundaries
+  (`DecryptionFailed(UnencryptedWhenPassthroughDisabled)`), and the
+  error propagates from `AudioReceiveStream` → `AudioResource` →
+  `AudioPlayer`. An unhandled `'error'` on any of those crashes the
+  whole Node process. Swallow the DAVE-specific message and continue;
+  log anything else.
+- **`AudioReceiveStream` emits `'close'`, not `'end'`, on
+  `EndBehaviorType.AfterSilence` cleanup.** Watch for both events when
+  waiting for a receive stream to finish, or the max-hold timer wins
+  the race even after the stream has closed.
+- **Do not `.on('data', …)` on an `AudioReceiveStream` you are also
+  feeding to `createAudioResource(inputType: StreamType.Opus)`.** The
+  extra listener flips the Readable into flowing mode and `read()`
+  returns null; the target player transmits nothing. Diagnose from
+  `AudioPlayer` state transitions and `AudioResource.playbackDuration`
+  instead.
+- **Discord's guild owner cannot be moved by a bot**, regardless of
+  the bot's permissions. `MOVE_MEMBERS` on the guild owner always
+  fails. Detect the case up front and skip with a clear reply.
+- **Channel rename PATCH is limited to ~2 per 10 min per channel.**
+  User-driven renames are best-effort — surface Discord's 429 back to
+  the operator ("try again in ~10 minutes") rather than queuing.
 
 ## Build order
 
-Spec §16. Currently at **step 1: the receive spike** (`src/spike/receive.ts`).
-Nothing else is built until it prints PASS on a real guild.
+Spec §15. Step 1 is the current clean-up pass — legacy modules removed,
+identifiers moved into the `star-comms` namespace, schema replaced.
+The receive spike (`src/spike/receive.ts`) is retained as the DAVE
+smoke test.
 
 ## Layout
 
-    docs/spec.html        the specification
-    src/spike/receive.ts  step 1 — proves decrypted per-SSRC PCM under DAVE
-    src/lib/              shared helpers
-    config/               fleet config (fleet.yaml is gitignored)
-    cues/                 cue audio (gitignored)
-    data/                 SQLite, host-mounted
+    docs/spec.html         the specification
+    src/spike/receive.ts   DAVE decrypt smoke test (`npm run spike`)
+    src/index.ts           entrypoint (fleet + healthz + /star-comms status)
+    src/fleet/             manager, boot sweep, healthz
+    src/commands/          slash registrar + /star-comms tree
+    src/session/relay.ts   bidirectional audio-relay primitive
+                           (extended into runHailLeg in step 6)
+    src/lib/               config, db, cues, audio helpers, env, pkg
+    config/                fleet config (fleet.yaml is gitignored)
+    cues/                  cue audio (gitignored)
+    data/                  SQLite, host-mounted
 
 ## Commands
 
-    npm run spike        run the receive spike against .env
+    npm run spike        run the DAVE receive spike against .env
+    npm run dev          run the fleet from source, reload on edit
     npm test             unit tests
     npm run typecheck    tsc --noEmit
-    docker compose up    dev container (spike, dev target, src mounted)
+    docker compose up    dev container (src mounted, dev target)

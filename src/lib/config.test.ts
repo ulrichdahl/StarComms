@@ -7,7 +7,7 @@ import { loadConfig, redactMember } from './config.js';
 const tmpDirs: string[] = [];
 
 function writeConfig(body: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'starbridge-cfg-'));
+  const dir = mkdtempSync(join(tmpdir(), 'starcomms-cfg-'));
   tmpDirs.push(dir);
   const path = join(dir, 'fleet.yaml');
   writeFileSync(path, body);
@@ -178,10 +178,10 @@ fleet:
     expect(cfg.defaults).toMatchObject({
       locale: 'en',
       cueDurationMs: 1200,
-      openTimeoutMs: 5000,
-      silenceCloseMs: 2000,
-      maxHoldMs: 60_000,
-      closeCueEnabled: true,
+      ringIntervalMs: 4_000,
+      ringMaxMs: 20_000,
+      hailSilenceCloseMs: 10_000,
+      hailMaxHoldMs: 1_800_000,
     });
   });
 
@@ -190,12 +190,12 @@ fleet:
 defaults:
   locale: da
   cue_duration_ms: 900
-  close_cue_enabled: false
+  hail_silence_close_ms: 15000
 `;
     const cfg = loadConfig(writeConfig(yaml), validEnv);
     expect(cfg.defaults.locale).toBe('da');
     expect(cfg.defaults.cueDurationMs).toBe(900);
-    expect(cfg.defaults.closeCueEnabled).toBe(false);
+    expect(cfg.defaults.hailSilenceCloseMs).toBe(15_000);
   });
 });
 

@@ -13,11 +13,9 @@ import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 
 export type Locale = 'en' | 'da';
-export type MuteMode = 'priority_speaker' | 'hard_mute';
-export type SttDriver = 'whisper_local' | 'deepgram' | 'fake';
 
 export interface FleetMember {
-  /** NATO name in lowercase: alfa..lima. Doubles as the callsign in that guild. */
+  /** NATO identifier for a relay bot — alfa/bravo/charlie/… Also the token_env key. */
   nato: string;
   applicationId: string;
   /** Resolved from the env var named by `token_env`. Not persisted anywhere. */
@@ -25,9 +23,8 @@ export interface FleetMember {
 }
 
 /**
- * The 4-bot controller (see CLAUDE.md "Divergence from spec"). A separate
- * Discord application that registers `/star-bridge` and holds all channel-
- * management permissions. Not a squad member — never joins voice.
+ * Controller application — registers slash commands, creates + moves vessels,
+ * holds channel-management permissions. Not part of the relay pool.
  */
 export interface ControllerConfig {
   applicationId: string;
@@ -36,14 +33,12 @@ export interface ControllerConfig {
 
 export interface FleetDefaults {
   locale: Locale;
-  muteMode: MuteMode;
-  sttDriver: SttDriver;
   cueSet: string;
   cueDurationMs: number;
-  openTimeoutMs: number;
-  silenceCloseMs: number;
-  maxHoldMs: number;
-  closeCueEnabled: boolean;
+  ringIntervalMs: number;
+  ringMaxMs: number;
+  hailSilenceCloseMs: number;
+  hailMaxHoldMs: number;
 }
 
 export interface FleetConfig {
@@ -67,14 +62,12 @@ interface RawController {
 
 interface RawDefaults {
   locale?: unknown;
-  mute_mode?: unknown;
-  stt_driver?: unknown;
   cue_set?: unknown;
   cue_duration_ms?: unknown;
-  open_timeout_ms?: unknown;
-  silence_close_ms?: unknown;
-  max_hold_ms?: unknown;
-  close_cue_enabled?: unknown;
+  ring_interval_ms?: unknown;
+  ring_max_ms?: unknown;
+  hail_silence_close_ms?: unknown;
+  hail_max_hold_ms?: unknown;
 }
 
 interface RawConfig {
@@ -85,14 +78,12 @@ interface RawConfig {
 
 const DEFAULTS: FleetDefaults = {
   locale: 'en',
-  muteMode: 'priority_speaker',
-  sttDriver: 'whisper_local',
   cueSet: 'default',
   cueDurationMs: 1200,
-  openTimeoutMs: 5000,
-  silenceCloseMs: 2000,
-  maxHoldMs: 60_000,
-  closeCueEnabled: true,
+  ringIntervalMs: 4_000,
+  ringMaxMs: 20_000,
+  hailSilenceCloseMs: 10_000,
+  hailMaxHoldMs: 1_800_000,
 };
 
 // Names are lowercased in state and on the wire; the operator may write any
@@ -138,14 +129,6 @@ function pickInt(value: unknown, field: string, fallback: number): number {
   return value;
 }
 
-function pickBool(value: unknown, field: string, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  if (typeof value !== 'boolean') {
-    throw new ConfigError(`${field} must be a boolean, got ${JSON.stringify(value)}`);
-  }
-  return value;
-}
-
 /**
  * Read and validate a fleet config file.
  *
@@ -160,9 +143,9 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
   }
   const raw = parsed as RawConfig;
 
-  // The controller is a separate Discord application from any squad member —
-  // see CLAUDE.md "Divergence from spec". It registers /star-bridge and holds
-  // all channel-management permissions; squad bots only join voice.
+  // The controller is a separate Discord application from any relay member.
+  // It registers /star-comms and holds channel-management permissions;
+  // relay bots only join voice channels for the duration of a hail.
   if (!isRecord(raw.controller)) {
     throw new ConfigError(
       'controller: block missing. The controller is a separate Discord ' +
@@ -243,14 +226,12 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
   const rd = (isRecord(raw.defaults) ? raw.defaults : {}) as RawDefaults;
   const defaults: FleetDefaults = {
     locale: pickEnum(rd.locale, 'defaults.locale', ['en', 'da'] as const, DEFAULTS.locale),
-    muteMode: pickEnum(rd.mute_mode, 'defaults.mute_mode', ['priority_speaker', 'hard_mute'] as const, DEFAULTS.muteMode),
-    sttDriver: pickEnum(rd.stt_driver, 'defaults.stt_driver', ['whisper_local', 'deepgram', 'fake'] as const, DEFAULTS.sttDriver),
     cueSet: typeof rd.cue_set === 'string' ? rd.cue_set : DEFAULTS.cueSet,
     cueDurationMs: pickInt(rd.cue_duration_ms, 'defaults.cue_duration_ms', DEFAULTS.cueDurationMs),
-    openTimeoutMs: pickInt(rd.open_timeout_ms, 'defaults.open_timeout_ms', DEFAULTS.openTimeoutMs),
-    silenceCloseMs: pickInt(rd.silence_close_ms, 'defaults.silence_close_ms', DEFAULTS.silenceCloseMs),
-    maxHoldMs: pickInt(rd.max_hold_ms, 'defaults.max_hold_ms', DEFAULTS.maxHoldMs),
-    closeCueEnabled: pickBool(rd.close_cue_enabled, 'defaults.close_cue_enabled', DEFAULTS.closeCueEnabled),
+    ringIntervalMs: pickInt(rd.ring_interval_ms, 'defaults.ring_interval_ms', DEFAULTS.ringIntervalMs),
+    ringMaxMs: pickInt(rd.ring_max_ms, 'defaults.ring_max_ms', DEFAULTS.ringMaxMs),
+    hailSilenceCloseMs: pickInt(rd.hail_silence_close_ms, 'defaults.hail_silence_close_ms', DEFAULTS.hailSilenceCloseMs),
+    hailMaxHoldMs: pickInt(rd.hail_max_hold_ms, 'defaults.hail_max_hold_ms', DEFAULTS.hailMaxHoldMs),
   };
 
   return { controller, fleet, defaults, raw: parsed };

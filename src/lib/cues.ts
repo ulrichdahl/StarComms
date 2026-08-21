@@ -24,7 +24,7 @@ import {
   createAudioResource, StreamType, type AudioResource,
 } from '@discordjs/voice';
 
-export const CUE_NAMES = ['ready', 'attention', 'horn', 'negative', 'busy', 'out'] as const;
+export const CUE_NAMES = ['ready', 'attention', 'ring', 'busy', 'end'] as const;
 export type Cue = typeof CUE_NAMES[number];
 
 /** Per-frame duration in ms at 48 kHz with frameSize 960. */
@@ -40,15 +40,14 @@ export interface LoadedCue {
 export type CuePaths = Record<Cue, string>;
 
 /**
- * `ready`, `attention` and `horn` are the strict trio per §5. `negative`,
- * `busy` and `out` are diagnostic; they play alone and are not subject to
- * the equal-duration invariant. We still validate them against the same
- * target because a mismatched `busy` sounds unprofessional at best and
- * hides operator errors at worst — but we do not want a stray recording
- * mistake here to keep the fleet from booting, so they use a wider
- * tolerance than the strict trio.
+ * `ready` and `attention` are the strict pair — they play concurrently
+ * across the caller and each accepted target on the same instant and
+ * their common end defines when the caller can start speaking, so any
+ * length drift clips the first word. `ring`, `busy` and `end` play
+ * alone and get a wider tolerance; we still validate them so operator-
+ * supplied packs stay coherent, but a small drift will not refuse boot.
  */
-const STRICT_CUES = new Set<Cue>(['ready', 'attention', 'horn']);
+const STRICT_CUES = new Set<Cue>(['ready', 'attention']);
 const STRICT_TOLERANCE_MS = 40;   // 2 opus frames
 const LOOSE_TOLERANCE_MS = 200;
 
@@ -83,7 +82,7 @@ export async function loadCueSet(
       throw new CueLoadError(
         `${name} (${basename(p)}) is ${durationMs} ms, expected ${expectedDurationMs} ± ${tolerance} ms. ` +
         (STRICT_CUES.has(name)
-          ? 'ready/attention/horn must match exactly or Ready ends before Attention and the first word clips (§5).'
+          ? 'ready and attention must match exactly or their concurrent playback drifts and the first word clips.'
           : 'this cue plays alone, but is still validated to catch operator mistakes.'),
       );
     }
@@ -200,8 +199,8 @@ export function resolveCuePaths(
   };
 
   const paths: Partial<CuePaths> = {};
-  const localizedNames: readonly Cue[] = ['ready', 'attention', 'negative', 'busy'];
-  const sharedNames: readonly Cue[] = ['horn', 'out'];
+  const localizedNames: readonly Cue[] = ['ready', 'attention', 'busy'];
+  const sharedNames: readonly Cue[] = ['ring', 'end'];
 
   for (const n of localizedNames) {
     const v = localized[n];

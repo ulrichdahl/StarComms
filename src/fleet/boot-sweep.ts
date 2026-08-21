@@ -1,72 +1,61 @@
 /**
- * Boot sweep — spec §11.
+ * Boot sweep — Spec 1.0 §10.
  *
- * Runs before the fleet connects. Reads four tables written by earlier crashes:
+ * Runs before the fleet connects. Reads three tables that later steps
+ * write into and reports what needs recovering:
  *
- *   mute_state           — restore members left hard-muted (spec §6)
- *   sessions.teardown_at — finish teardowns whose timer expired mid-crash (§8)
- *   channel_pool         — repair overwrites that never got hidden (§4)
- *   relays.state         — close nets left open by a crash mid-relay (§5)
+ *   active_hails   — rows without closed_at are force-closed with
+ *                    close_reason = 'drain'. A crash mid-hail leaves
+ *                    such a row; this is the recovery path.
+ *   vessels        — rows whose channel_id no longer exists on Discord
+ *                    should be marked deleted_at. Recovery requires the
+ *                    fleet to be logged in, so this step only reports
+ *                    the count; the actual Discord fetch happens later.
+ *   hail_registry  — rows whose channel no longer exists should be
+ *                    dropped. Same fetch caveat as vessels.
  *
- * On a clean database every count is zero and the sweep is a no-op — but this
- * code path is real, because those tables are populated only by later steps
- * and only this path can recover them on the next boot.
- *
- * For step 2 the sweep detects and *logs* what needs recovering; the actual
- * Discord operations (unmute members, PATCH overwrites, close voice
- * connections, force-close relays) require code that arrives in steps 5, 6
- * and 8. The intent here is to make sure the state is visible on every boot
- * from the start, so no crash silently leaves inconsistencies.
+ * On a fresh install every count is zero. The code path is real from
+ * day one so a later crash finds a working recovery.
  */
 
 import type { DB } from '../lib/db.js';
 
 export interface SweepCounts {
-  mutesToRestore: number;
-  sessionsPastTeardown: number;
-  poolOverwrites: number;
-  openRelays: number;
+  hailsForceClosed: number;
+  vesselsPresent: number;
+  registryEntries: number;
 }
 
-/** Zero across the board — the shape a clean boot returns. */
 export function emptySweep(): SweepCounts {
-  return { mutesToRestore: 0, sessionsPastTeardown: 0, poolOverwrites: 0, openRelays: 0 };
+  return { hailsForceClosed: 0, vesselsPresent: 0, registryEntries: 0 };
 }
 
 export function bootSweep(db: DB, now: number = Date.now()): SweepCounts {
-  // Only mutes belonging to sessions that have not fully ended need restoring.
-  // A completed session already unmuted everyone; a leaked mute is one whose
-  // session ended without the unmute path running.
-  const mutes = db.prepare(`
-    SELECT COUNT(*) AS c FROM mute_state
+  // Force-close any un-closed hails from a previous run. Runs synchronously
+  // before any Discord I/O; no bot has connected yet, so nobody is affected
+  // in-flight.
+  const forceClose = db.prepare(`
+    UPDATE active_hails
+    SET closed_at = ?, close_reason = 'drain'
+    WHERE closed_at IS NULL
+  `).run(now);
+
+  const vessels = db.prepare(`
+    SELECT COUNT(*) AS c FROM vessels WHERE deleted_at IS NULL
   `).get() as { c: number };
 
-  const staleSessions = db.prepare(`
-    SELECT COUNT(*) AS c FROM sessions
-    WHERE ended_at IS NULL AND teardown_at IS NOT NULL AND teardown_at <= ?
-  `).get(now) as { c: number };
-
-  // Any pool row is a permission overwrite the operator placed on a channel
-  // that the fleet needs to keep coherent — the sweep touches these to
-  // reconcile a crash mid-provisioning, not to remove them.
-  const pool = db.prepare(`
-    SELECT COUNT(*) AS c FROM channel_pool
-  `).get() as { c: number };
-
-  const openRelays = db.prepare(`
-    SELECT COUNT(*) AS c FROM relays
-    WHERE state IN ('opening', 'open', 'closing')
+  const registry = db.prepare(`
+    SELECT COUNT(*) AS c FROM hail_registry
   `).get() as { c: number };
 
   return {
-    mutesToRestore: mutes.c,
-    sessionsPastTeardown: staleSessions.c,
-    poolOverwrites: pool.c,
-    openRelays: openRelays.c,
+    hailsForceClosed: forceClose.changes,
+    vesselsPresent: vessels.c,
+    registryEntries: registry.c,
   };
 }
 
 export function formatSweep(s: SweepCounts): string {
-  return `swept: ${s.mutesToRestore} mutes, ${s.sessionsPastTeardown} stale sessions, ` +
-    `${s.poolOverwrites} pool overwrites, ${s.openRelays} open relays`;
+  return `swept: ${s.hailsForceClosed} hails force-closed, ` +
+    `${s.vesselsPresent} vessel(s) present, ${s.registryEntries} hail registrations`;
 }

@@ -207,7 +207,7 @@ export class Fleet {
     return e.client;
   }
 
-  /** The controller Client — registrar for /star-bridge, holder of channel-management perms. */
+  /** The controller Client — registrar for /star-comms, holder of channel-management perms. */
   controllerClient(): Client { return this.controller.client; }
 
   /**

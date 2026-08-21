@@ -16,10 +16,10 @@
  *      after `maxHoldMs`, whichever comes first.
  *   6. Plays `Out` on both sides, then unsubscribes.
  *
- * This is a manual API — `/star-bridge hail target:<callsign>` invokes
- * it directly. Step 6b replaces the slash trigger with a voice-recognised
- * verb + callsign parse. Step 6c generalises to a full per-net state
- * machine with locks and priority preemption (§5).
+ * The relay primitive is retained across the design pivot. Step 6 of
+ * the new build order (spec §15) generalises this one-way function into
+ * `runHailLeg`, a per-channel bidirectional leg that the allocator wires
+ * together to bridge two or more channels.
  */
 
 import {
@@ -161,13 +161,13 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
     opusPackets = Math.round(resource.playbackDuration / 20);
     hlog(`closed=${closedBy} playbackMs=${resource.playbackDuration} ~packets=${opusPackets} daveDropped=${daveDropped}`);
 
-    // Out cue on both sides. On max_hold we cut the stream first so the
-    // Out cue is not fighting the still-flowing opus for target's player.
+    // End cue on both sides. On max_hold we cut the stream first so the
+    // End cue is not fighting the still-flowing opus for target's player.
     if (closedBy === 'max_hold') {
       opusStream.destroy();
     }
-    sourcePlayer.play(createCueResource(cfg.cues.get('out')));
-    targetPlayer.play(createCueResource(cfg.cues.get('out')));
+    sourcePlayer.play(createCueResource(cfg.cues.get('end')));
+    targetPlayer.play(createCueResource(cfg.cues.get('end')));
     await sleep(cfg.cues.expectedDurationMs);
 
     return {

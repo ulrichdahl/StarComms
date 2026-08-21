@@ -1,20 +1,18 @@
-# Star Bridge fleet configuration.
+# Star Comms fleet configuration.
 # Copy to config/fleet.yaml (gitignored) and fill in.
 #
 # One entry per Discord application. There is no API for creating applications,
 # so each is registered by hand in the developer portal, and each needs the
-# privileged SERVER MEMBERS intent toggled on. Spec §2, §12.
+# privileged SERVER MEMBERS intent toggled on.
 #
 # Tokens are never stored here — only the name of the env var holding them.
 #
-# The 4-bot layout (see CLAUDE.md "Divergence from spec"): one dedicated
-# controller application + N squad bots. The controller registers
-# /star-bridge and holds channel-management permissions; the squad joins
-# voice.
+# v1 ships with one controller (slash commands, channel management, no voice)
+# plus N relay bots that are allocated to voice channels as hails require.
 
 controller:
   application_id: "000000000000000000"
-  token_env: SB_TOKEN_CONTROLLER     # registers slash commands, provisions the channel pool
+  token_env: SB_TOKEN_CONTROLLER     # registers slash commands, creates + moves vessels
 
 fleet:
   - nato: alfa
@@ -27,48 +25,29 @@ fleet:
     application_id: "000000000000000000"
     token_env: SB_TOKEN_CHARLIE
 
-# Per-guild overridable defaults. Spec §5.
+# Per-guild overridable defaults.
 defaults:
   locale: en
-  mute_mode: priority_speaker    # priority_speaker | hard_mute
-  stt_driver: whisper_local      # whisper_local | deepgram | fake
   cue_set: default
-  cue_duration_ms: 1200          # D_c — every cue asset is normalised to this
-  open_timeout_ms: 5000          # Ready played, nobody spoke -> close
-  silence_close_ms: 2000         # speech ended -> close
-  max_hold_ms: 60000             # hard cap on a held net
-  close_cue_enabled: true
+  cue_duration_ms: 1200           # D_c — ready and attention normalise to this
+  ring_interval_ms: 4000          # gap between repeated Ring plays in locked targets
+  ring_max_ms: 20000              # ring budget before an unresponsive locked target auto-declines
+  hail_silence_close_ms: 10000    # hail closes when no owner has spoken for this long
+  hail_max_hold_ms: 1800000       # hard cap on a single hail (30 min safety net)
 
-# Spoken forms per intent. Several accepted per intent; extended at runtime
-# from the alias_variants table as operators hit misrecognitions. Spec §10.
-locales:
-  en:
-    alert:     [alert]
-    broadcast: [broadcast]
-    hail:      [hail]
-    command:   [command]
-    out:       [out]
-  da:
-    alert:     [alarm]
-    broadcast: [udsend]
-    hail:      [kald]
-    command:   [ordre]
-    out:       [slut]
-
-# Cue audio. Startup validates every asset against cue_duration_ms and fails
-# loudly on mismatch — an unequal Attention/Horn pair clips first words. §5.
+# Cue audio. Startup validates every asset against cue_duration_ms; ready
+# and attention must match exactly (they play concurrently across channels),
+# ring/busy/end have wider tolerance.
 cue_sets:
   default:
     en:
       ready:     cues/en/ready.wav
       attention: cues/en/attention.wav
-      negative:  cues/en/negative.wav
       busy:      cues/en/busy.wav
     da:
       ready:     cues/da/klar.wav
       attention: cues/da/giv_agt.wav
-      negative:  cues/da/negativ.wav
       busy:      cues/da/optaget.wav
     shared:
-      horn:      cues/horn.wav      # length must equal attention
-      out:       cues/out.wav
+      ring:      cues/ring.wav
+      end:       cues/end.wav

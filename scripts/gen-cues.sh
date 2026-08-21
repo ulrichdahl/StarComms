@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
-# Placeholder cue generator — six 1200 ms WAVs, distinct sine frequencies
-# per cue so they are trivially distinguishable by ear during step 4
-# verification. Real cues (TTS or recorded) drop in later without code
-# changes: same filenames, same equal duration, same 48 kHz stereo.
+# Placeholder cue generator — five 1200 ms WAVs, distinct sine frequencies
+# per cue so they are trivially distinguishable by ear during test.
+# Real cues (TTS or recorded) drop in later without code changes: same
+# filenames, same equal duration, same 48 kHz stereo.
 #
-# Spec §5: ready, attention and horn must be *exactly* cue_duration_ms.
-# We generate all six at exactly 1200 ms so the loader's equal-duration
-# validation passes.
+# ready + attention must be equal length: they play concurrently across
+# channels and their common end defines when the caller can start
+# speaking. All five are generated at 1200 ms for simplicity.
 #
 # Each cue is 200 ms of silence followed by 1000 ms of tone; the leading
 # silence guards against cold-stream first-packet loss on receiving
 # clients (see cues/README.md).
 #
 # Usage:  scripts/gen-cues.sh
-# Writes: cues/en/{ready,attention,negative,busy}.wav
-#         cues/{horn,out}.wav
+# Writes: cues/en/{ready,attention,busy}.wav
+#         cues/{ring,end}.wav
 
 set -euo pipefail
 
@@ -32,19 +32,16 @@ mkdir -p "$CUES/en"
 declare -A LOCALIZED=(
   [en/ready]=880
   [en/attention]=440
-  [en/negative]=220
   [en/busy]=660
 )
 
 declare -A SHARED=(
-  [horn]=520
-  [out]=196
+  [ring]=520
+  [end]=196
 )
 
 gen() {
   local out="$1" freq="$2"
-  # sine of duration 1.0 s, delayed by 200 ms on both channels, capped at
-  # exactly 1.2 s of output. adelay pads the front with silence.
   ffmpeg -y -hide_banner -loglevel error \
     -f lavfi -i "sine=frequency=${freq}:duration=1.0:sample_rate=48000" \
     -af "adelay=200|200" \
@@ -63,4 +60,4 @@ done
 
 echo
 echo "Placeholder cues generated in $CUES. Replace with real assets any time;"
-echo "the loader only requires equal duration per spec §5."
+echo "the loader only requires equal duration for ready + attention."

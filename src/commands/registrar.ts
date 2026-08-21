@@ -2,14 +2,15 @@
  * Slash command registrar + dispatcher for the controller.
  *
  * Runs on the controller Client only. On ClientReady it registers
- * `/star-bridge` in every guild the controller is in; on GuildCreate it
+ * `/star-comms` in every guild the controller is in; on GuildCreate it
  * registers in the newly added guild. Guild-scoped commands take effect
  * immediately, whereas global commands can take up to an hour to
  * propagate — the difference matters when an operator is iterating.
  *
- * Interactions are dispatched to handler callables. Step 5a wires two:
- * `init` (pool provisioning) and `status` (a quick read-out). Later steps
- * will add wizard subcommands, the callsign alias UI, etc.
+ * Interactions are dispatched to handler callables keyed by subcommand
+ * name. The subcommand set grows as the build order (Spec 1.0 §15)
+ * introduces `init`, `register`, `unregister`, `callsign`, and the
+ * rest.
  */
 
 import {
@@ -17,7 +18,7 @@ import {
   type ChatInputCommandInteraction, type Client,
 } from 'discord.js';
 import type { ControllerConfig } from '../lib/config.js';
-import { starBridgeCommand } from './star-bridge.js';
+import { starCommsCommand } from './star-comms.js';
 
 export type SubcommandHandler = (interaction: ChatInputCommandInteraction) => Promise<void>;
 
@@ -43,41 +44,38 @@ export class SlashRegistrar {
   async start(): Promise<void> {
     const { controllerClient } = this.cfg;
 
-    // Handle interactions.
     controllerClient.on(Events.InteractionCreate, (interaction) => {
       if (!interaction.isChatInputCommand()) return;
-      if (interaction.commandName !== 'star-bridge') return;
+      if (interaction.commandName !== 'star-comms') return;
       void this.dispatch(interaction);
     });
 
-    // Register in guilds joined after boot.
     controllerClient.on(Events.GuildCreate, (guild) => {
       void this.registerFor(guild.id).catch((err) => {
         console.error(`registrar: failed to register in ${guild.id}: ${err instanceof Error ? err.message : err}`);
       });
     });
 
-    // Register in every guild we already know about.
     const guilds = [...controllerClient.guilds.cache.keys()];
-    console.log(`registrar: registering /star-bridge in ${guilds.length} guild(s)`);
+    console.log(`registrar: registering /star-comms in ${guilds.length} guild(s)`);
     await Promise.all(guilds.map((id) => this.registerFor(id).catch((err) => {
       console.error(`registrar: failed to register in ${id}: ${err instanceof Error ? err.message : err}`);
     })));
   }
 
   private async registerFor(guildId: string): Promise<void> {
-    const body = [starBridgeCommand()];
+    const body = [starCommsCommand()];
     await this.rest.put(
       Routes.applicationGuildCommands(this.cfg.controllerAppId, guildId),
       { body },
     );
-    console.log(`registrar: /star-bridge available in guild ${guildId}`);
+    console.log(`registrar: /star-comms available in guild ${guildId}`);
   }
 
   private async dispatch(interaction: ChatInputCommandInteraction): Promise<void> {
     const sub = interaction.options.getSubcommand(false);
     if (sub === null) {
-      await interaction.reply({ content: 'usage: /star-bridge init | status', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: 'usage: /star-comms <subcommand>', flags: MessageFlags.Ephemeral });
       return;
     }
     const handler = this.cfg.handlers[sub];
