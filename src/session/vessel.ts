@@ -298,27 +298,72 @@ async function onChannelLeave(
   `).get(channelId) as VesselRow | undefined;
   if (vessel === undefined) return;
 
-  // Owner-leaves side effect: drop hail_registry, and force-close any
-  // hail this vessel is currently part of. Rename back to 🔊 waits on
-  // a subsequent Rename click — the ~2/10min bucket does not let us
-  // both drop the row and rename immediately.
-  if (vessel.owner_user_id === state.id) {
-    cfg.db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channelId);
-    if (cfg.hails !== null) {
-      await cfg.hails.handleOwnerLeft(state.guild.id, state.id, channelId).catch((err) => {
-        console.error(`vessel: hail close on owner-leave failed: ${errMsg(err)}`);
-      });
-    }
+  // Owner-leaves side effect: force-close any hail this vessel is
+  // currently part of.
+  const ownerLeft = vessel.owner_user_id === state.id;
+  if (ownerLeft && cfg.hails !== null) {
+    await cfg.hails.handleOwnerLeft(state.guild.id, state.id, channelId).catch((err) => {
+      console.error(`vessel: hail close on owner-leave failed: ${errMsg(err)}`);
+    });
   }
 
   // Empty check. Uses the channel's live members map — voiceStateUpdate
   // fires after the cache is updated so this reflects the post-leave state.
   const channel = await state.guild.channels.fetch(channelId).catch(() => null);
   if (channel === null || channel.type !== ChannelType.GuildVoice) return;
-  const remainingHumans = channel.members.filter((m) => !m.user.bot).size;
-  if (remainingHumans > 0) return;
+  const remainingHumans = channel.members.filter((m) => !m.user.bot);
 
-  scheduleCleanup(cfg, channel.client, channelId, pendingCleanups);
+  if (remainingHumans.size === 0) {
+    // Nobody left. Schedule the 30 s cleanup; hail_registry drop moves
+    // with the delete so a rejoin within the grace window keeps the
+    // vessel + directory state intact.
+    scheduleCleanup(cfg, channel.client, channelId, pendingCleanups);
+    return;
+  }
+
+  // Others remain. Owner absent → transfer ownership to a remaining
+  // member and turn hails off. The founder's callsign was their
+  // identity, not the room's; the group keeps the room but not the
+  // hail directory presence.
+  if (ownerLeft) {
+    const successor = remainingHumans.first();
+    if (successor !== undefined) {
+      await transferOwnership(cfg, channel, vessel.owner_user_id, successor).catch((err) => {
+        console.error(`vessel: ownership transfer failed on ${channelId}: ${errMsg(err)}`);
+      });
+    }
+  }
+}
+
+async function transferOwnership(
+  cfg: VesselServiceConfig,
+  channel: VoiceBasedChannel,
+  oldOwnerUserId: string,
+  successor: GuildMember,
+): Promise<void> {
+  cfg.db.prepare(
+    `UPDATE vessels SET owner_user_id = ? WHERE channel_id = ? AND deleted_at IS NULL`,
+  ).run(successor.id, channel.id);
+  cfg.db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channel.id);
+
+  // Best-effort rename to `🔊 <new owner display name>`. Discord's
+  // ~2/10 min rename bucket may reject this; log the failure and move
+  // on. The DB state is authoritative — the visual will follow the
+  // next time the rename bucket has capacity, or on the next click.
+  const newName = `🔊 ${successor.displayName}`.slice(0, 100);
+  await channel.setName(newName, 'Star Comms: ownership transfer').catch((err) => {
+    console.warn(`vessel: rename on ownership transfer 429/failed: ${errMsg(err)}`);
+  });
+
+  await channel.send({
+    content: `⚓ <@${oldOwnerUserId}> left. Ownership passed to ${successor.toString()}. Hails disabled.`,
+  }).catch((err) => {
+    console.error(`vessel: transfer notice post failed: ${errMsg(err)}`);
+  });
+
+  console.log(
+    `vessel: transferred ${channel.id} from ${oldOwnerUserId} → ${successor.id}`,
+  );
 }
 
 function scheduleCleanup(
@@ -360,6 +405,7 @@ async function cleanupIfStillEmpty(
   await channel.delete('Star Comms: vessel empty').catch((err) => {
     console.error(`vessel: delete ${channelId} failed: ${errMsg(err)}`);
   });
+  cfg.db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channelId);
   markDeleted(cfg.db, channelId);
   console.log(`vessel: deleted empty ${channelId}`);
 }

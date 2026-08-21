@@ -3,72 +3,114 @@
  *
  * `bootSweep` runs before the fleet connects and can only count DB
  * rows; it cannot ask Discord whether a channel still exists. Once the
- * controller Client is ready, this pass fetches each tracked vessel
- * channel and drops rows for channels that Discord no longer has.
+ * controller Client is ready, this pass:
+ *
+ *   • drops rows whose channel Discord no longer has,
+ *   • deletes vessels that are currently empty on Discord — a previous
+ *     process may have crashed before the 30 s empty-cleanup fired,
+ *     leaving an orphan channel sitting empty. Reconciliation is that
+ *     recovery.
  *
  * The heavy lifting is a pure function that takes a `probe(channelId)`
- * callable returning a boolean — makes the DB half trivially testable
- * with an in-memory Map. `runReconciliation` is the thin wrapper that
- * turns the controller Client into such a probe.
+ * callable returning a small status — trivially testable with an
+ * in-memory Map. `runReconciliation` is the thin wrapper that turns
+ * the controller Client into such a probe.
  */
 
-import type { Client } from 'discord.js';
+import type { Client, GuildBasedChannel } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import type { DB } from '../lib/db.js';
 import { reconcileChannelGone } from '../session/vessel.js';
+
+export type ProbeStatus =
+  | { kind: 'missing' }
+  | { kind: 'occupied' }
+  | { kind: 'empty'; delete: () => Promise<void> };
 
 export interface ReconcileResult {
   vesselsChecked: number;
   vesselsMissing: number;
+  vesselsDeletedEmpty: number;
 }
 
 /**
- * Pure reconciliation over the DB. `probe(channelId)` should resolve
- * `true` if the channel still exists on Discord, `false` if it does
- * not, and reject if the probe itself failed (network etc.). Rejections
- * are treated as "unknown, do not drop" — we only remove rows we are
- * confident are gone.
+ * Pure reconciliation over the DB. `probe(channelId)` resolves to one
+ * of `missing` / `occupied` / `empty`; the empty branch carries a
+ * `delete` thunk the caller uses to remove the channel. Rejections are
+ * treated as "unknown, do not touch" — we only act on rows we are
+ * confident about.
  */
 export async function reconcile(
   db: DB,
-  probe: (channelId: string) => Promise<boolean>,
+  probe: (channelId: string) => Promise<ProbeStatus>,
 ): Promise<ReconcileResult> {
   const rows = db.prepare(`
     SELECT channel_id FROM vessels WHERE deleted_at IS NULL
   `).all() as Array<{ channel_id: string }>;
 
   let missing = 0;
+  let deletedEmpty = 0;
   for (const row of rows) {
-    let exists: boolean;
+    let status: ProbeStatus;
     try {
-      exists = await probe(row.channel_id);
+      status = await probe(row.channel_id);
     } catch {
-      continue; // unknown, leave the row alone
+      continue;
     }
-    if (!exists) {
+    if (status.kind === 'missing') {
       reconcileChannelGone(db, row.channel_id);
       missing += 1;
+      continue;
+    }
+    if (status.kind === 'empty') {
+      try {
+        await status.delete();
+        reconcileChannelGone(db, row.channel_id);
+        deletedEmpty += 1;
+      } catch {
+        // Delete failed (perm change, etc). Leave the row alone; the
+        // vessel service's live listeners will pick it up if the state
+        // changes later.
+      }
     }
   }
 
-  return { vesselsChecked: rows.length, vesselsMissing: missing };
+  return {
+    vesselsChecked: rows.length,
+    vesselsMissing: missing,
+    vesselsDeletedEmpty: deletedEmpty,
+  };
 }
 
 /**
- * Wire `reconcile` to a live controller Client. A channel fetch that
- * throws with the Discord "Unknown Channel" code is treated as the
- * channel being gone; anything else is treated as "unknown".
+ * Wire `reconcile` to a live controller Client. Missing → Unknown
+ * Channel (10003); Empty → voice channel with no non-bot members;
+ * Occupied → anything else.
  */
 export async function runReconciliation(db: DB, controller: Client): Promise<ReconcileResult> {
   return reconcile(db, async (channelId) => {
+    let channel: GuildBasedChannel | null;
     try {
-      const channel = await controller.channels.fetch(channelId);
-      return channel !== null;
+      channel = (await controller.channels.fetch(channelId)) as GuildBasedChannel | null;
     } catch (err) {
-      // Discord uses code 10003 for Unknown Channel. Any DiscordAPIError
-      // carrying that code means the channel is really gone.
-      if (isUnknownChannelError(err)) return false;
+      if (isUnknownChannelError(err)) return { kind: 'missing' };
       throw err;
     }
+    if (channel === null) return { kind: 'missing' };
+    if (channel.type !== ChannelType.GuildVoice) {
+      // A non-voice channel with this id means either a schema drift
+      // or a channel replaced by hand. Treat as occupied — do not
+      // touch it.
+      return { kind: 'occupied' };
+    }
+    const humans = channel.members.filter((m) => !m.user.bot).size;
+    if (humans > 0) return { kind: 'occupied' };
+    return {
+      kind: 'empty',
+      delete: async () => {
+        await channel!.delete('Star Comms: boot cleanup of empty vessel');
+      },
+    };
   });
 }
 

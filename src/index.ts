@@ -80,7 +80,8 @@ async function main(): Promise<void> {
     const result = await runReconciliation(db, fleet.controllerClient());
     console.log(
       `reconcile: checked ${result.vesselsChecked} vessel(s), ` +
-      `dropped ${result.vesselsMissing} gone`,
+      `dropped ${result.vesselsMissing} gone, ` +
+      `deleted ${result.vesselsDeletedEmpty} orphan empty`,
     );
   } catch (err) {
     console.warn(`reconcile: failed — ${err instanceof Error ? err.message : String(err)}`);
