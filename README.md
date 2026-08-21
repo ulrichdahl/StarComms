@@ -13,10 +13,12 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 1 of 10** (spec §15) — legacy pass complete. Runtime is a
-minimum viable shell: fleet logs in, `/healthz` reports on it, and
-`/star-comms status` echoes the fleet state. Subsequent steps add the
-vessels, callsign registry, control panel, and hail flow.
+**Step 2 of 10** (spec §15) — vessels. `/star-comms init` picks the
+guild's join-to-create voice channel; when a member joins it, the
+controller creates a vessel channel named `🔊 <display name>`, moves
+them in, records it in the DB, and posts a welcome message. Empty
+vessels are auto-deleted after 30 seconds. Subsequent steps add the
+callsign registry, control panel buttons, and hail flow.
 
 The receive spike (`src/spike/receive.ts`) is retained as a DAVE
 smoke test — run it after any `@discordjs/voice` or `@snazzah/davey`
@@ -78,6 +80,30 @@ Expected: `verdict: "ok"`, four members with `loggedIn: true`,
 
 In Discord, `/star-comms status` should return an ephemeral fleet
 snapshot.
+
+### 5. Init the guild + create your first vessel (step 2)
+
+```
+/star-comms init
+```
+
+Pick your guild's existing join-to-create voice channel from the
+select menu (many game-community servers already have one — e.g.
+`+ Create Channel`). Star Comms remembers that channel per guild.
+
+Now join that channel from a regular user account. Expected:
+
+- A new voice channel `🔊 <your display name>` appears under the
+  same category as the trigger.
+- You are automatically moved into it.
+- A message appears in the vessel's built-in voice-text chat
+  welcoming you.
+- When everyone leaves, the channel auto-deletes after 30 s
+  (immediate rejoin cancels the cleanup).
+
+If you are the guild owner, Discord blocks the automatic move —
+join the newly-created vessel manually. The welcome message tells
+you as much.
 
 ## Running the receive spike
 
@@ -174,7 +200,8 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 
 ## Next
 
-Step 2 — vessels. `voiceStateUpdate` listener on the controller;
-on join-to-create, create the owner's vessel channel, MOVE_MEMBERS
-them into it, insert a `vessels` row, post the control panel message
-in the vessel's voice-text chat. Auto-delete on empty.
+Step 3 — callsign registry. `/star-comms register <callsign>` stores
+a per-member (guild-scoped) ship name; `unregister` / `callsign`
+report and remove. The `[Allow hails]` control-panel button in step 5
+looks up this table to decide whether a vessel can be added to the
+hail directory.

@@ -23,6 +23,8 @@ import { bootSweep, formatSweep } from './fleet/boot-sweep.js';
 import { Fleet } from './fleet/manager.js';
 import { startStatusServer } from './fleet/status.js';
 import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
+import { makeInitHandler } from './commands/init.js';
+import { startVesselService } from './session/vessel.js';
 
 async function main(): Promise<void> {
   const startedAt = new Date();
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
   console.log('all members ready');
 
   const handlers: Record<string, SubcommandHandler> = {
+    init: makeInitHandler(config, db),
     status: async (interaction) => {
       const bots = fleet.states();
       const lines = ['**Star Comms fleet status**'];
@@ -76,6 +79,8 @@ async function main(): Promise<void> {
   };
   const registrar = makeRegistrar(config.controller, fleet.controllerClient(), handlers);
   await registrar.start();
+
+  const vessels = startVesselService({ fleet, db });
 
   const server = startStatusServer({ port, fleet, sweep, startedAt });
 
@@ -89,6 +94,7 @@ async function main(): Promise<void> {
     exiting = true;
     console.log(`\n${signal} — shutting down`);
     server.close();
+    vessels.stop();
     await fleet.stop();
     db.close();
     process.exit(0);

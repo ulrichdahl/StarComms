@@ -23,6 +23,11 @@ export function starCommsCommand(): RESTPostAPIChatInputApplicationCommandsJSONB
     dm_permission: false,
     options: [
       {
+        name: 'init',
+        description: 'Configure Star Comms for this guild — pick the join-to-create voice channel.',
+        type: ApplicationCommandOptionType.Subcommand,
+      },
+      {
         name: 'status',
         description: 'Report the fleet state for this guild.',
         type: ApplicationCommandOptionType.Subcommand,
