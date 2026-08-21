@@ -10,7 +10,7 @@
 
 import {
   ActionRowBuilder, ChannelSelectMenuBuilder, ChannelType, ComponentType,
-  MessageFlags, type ChatInputCommandInteraction,
+  MessageFlags, PermissionFlagsBits, type ChatInputCommandInteraction,
 } from 'discord.js';
 import type { DB } from '../lib/db.js';
 import type { FleetConfig } from '../lib/config.js';
@@ -25,6 +25,17 @@ export function makeInitHandler(config: FleetConfig, db: DB) {
     if (guild === null) {
       await interaction.reply({
         content: 'This command must be used in a guild.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Admin-only. Top-level `/star-comms` is open to every member so
+    // the registration subcommands work; init is gated here in the
+    // handler.
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({
+        content: 'You need the **Manage Server** permission to run `/star-comms init`.',
         flags: MessageFlags.Ephemeral,
       });
       return;

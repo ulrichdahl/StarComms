@@ -13,12 +13,11 @@ Full specification: **[`docs/spec.html`](docs/spec.html)**.
 
 ## Status
 
-**Step 2 of 10** (spec §15) — vessels. `/star-comms init` picks the
-guild's join-to-create voice channel; when a member joins it, the
-controller creates a vessel channel named `🔊 <display name>`, moves
-them in, records it in the DB, and posts a welcome message. Empty
-vessels are auto-deleted after 30 seconds. Subsequent steps add the
-callsign registry, control panel buttons, and hail flow.
+**Step 3 of 10** (spec §15) — callsign registry. `/star-comms
+register <callsign>` stores a per-member guild-scoped ship name.
+`unregister` removes it and drops the member's vessels from the
+hail directory. `callsign` reports the current value. Subsequent
+steps add the control panel buttons and the hail flow.
 
 The receive spike (`src/spike/receive.ts`) is retained as a DAVE
 smoke test — run it after any `@discordjs/voice` or `@snazzah/davey`
@@ -104,6 +103,22 @@ Now join that channel from a regular user account. Expected:
 If you are the guild owner, Discord blocks the automatic move —
 join the newly-created vessel manually. The welcome message tells
 you as much.
+
+### 6. Register your callsign (step 3)
+
+```
+/star-comms register callsign:Firefly
+```
+
+Any member can register their own ship name — 2–24 characters,
+starts and ends with a letter or digit, may contain letters,
+numbers, spaces, hyphens, underscores, or apostrophes. Unique per
+guild (case-insensitive). Re-run to replace, `/star-comms
+unregister` to drop, `/star-comms callsign` to check.
+
+Registration is a one-time setup. Enabling hails on a specific
+vessel (which renames it `🛰️ <callsign>`) is a separate flow
+that lands with the control-panel buttons in step 4.
 
 ## Running the receive spike
 
@@ -200,8 +215,8 @@ Full list in [`CLAUDE.md`](CLAUDE.md); the reasoning is in the spec.
 
 ## Next
 
-Step 3 — callsign registry. `/star-comms register <callsign>` stores
-a per-member (guild-scoped) ship name; `unregister` / `callsign`
-report and remove. The `[Allow hails]` control-panel button in step 5
-looks up this table to decide whether a vessel can be added to the
-hail directory.
+Step 4 — control panel buttons. Rename, Lock/Unlock, Limit, Kick,
+Allow hails / Disable hails, Hail. Owner-only enforcement per
+handler. The `[Allow hails]` button flips a vessel's channel to
+`🛰️ <callsign>` and adds a `hail_registry` row so it becomes
+selectable by others as a hail target.

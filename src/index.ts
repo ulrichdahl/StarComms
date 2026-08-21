@@ -24,6 +24,9 @@ import { Fleet } from './fleet/manager.js';
 import { startStatusServer } from './fleet/status.js';
 import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
 import { makeInitHandler } from './commands/init.js';
+import {
+  makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
+} from './commands/callsigns.js';
 import { startVesselService } from './session/vessel.js';
 
 async function main(): Promise<void> {
@@ -68,6 +71,9 @@ async function main(): Promise<void> {
 
   const handlers: Record<string, SubcommandHandler> = {
     init: makeInitHandler(config, db),
+    register: makeRegisterHandler(db),
+    unregister: makeUnregisterHandler(db),
+    callsign: makeCallsignHandler(db),
     status: async (interaction) => {
       const bots = fleet.states();
       const lines = ['**Star Comms fleet status**'];
