@@ -23,18 +23,23 @@
 
 import {
   ChannelType, Events, OverwriteType, PermissionFlagsBits, PermissionsBitField,
-  type Client, type Guild, type GuildMember, type OverwriteResolvable,
-  type VoiceBasedChannel, type VoiceState,
+  type Client, type DMChannel, type Guild, type GuildBasedChannel, type GuildMember,
+  type OverwriteResolvable, type VoiceBasedChannel, type VoiceState,
 } from 'discord.js';
 import type { DB } from '../lib/db.js';
 import type { Fleet } from '../fleet/manager.js';
 import { getJoinToCreateChannel } from './guild-row.js';
+import { buildPanel } from '../commands/panel.js';
+import { getVesselState } from './vessel-state.js';
+import type { HailManager } from './hail.js';
 
 const CLEANUP_DELAY_MS = 30_000;
 
 interface VesselServiceConfig {
   fleet: Fleet;
   db: DB;
+  /** Present when cues loaded and the hail service is armed. */
+  hails: HailManager | null;
 }
 
 interface VesselRow {
@@ -69,16 +74,42 @@ export function startVesselService(cfg: VesselServiceConfig): VesselService {
     }
   };
 
+  const onChannelDelete = (channel: DMChannel | GuildBasedChannel): void => {
+    if (channel.type !== ChannelType.GuildVoice) return;
+    // Idempotent: the row may already be marked deleted by our own delete path.
+    reconcileChannelGone(cfg.db, channel.id);
+    // Any pending 30 s cleanup for this channel is now moot.
+    const timer = pendingCleanups.get(channel.id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      pendingCleanups.delete(channel.id);
+    }
+  };
+
   controller.on(Events.VoiceStateUpdate, onVoiceStateUpdate);
+  controller.on(Events.ChannelDelete, onChannelDelete);
   console.log('vessel: service armed on controller');
 
   return {
     stop(): void {
       controller.off(Events.VoiceStateUpdate, onVoiceStateUpdate);
+      controller.off(Events.ChannelDelete, onChannelDelete);
       for (const timer of pendingCleanups.values()) clearTimeout(timer);
       pendingCleanups.clear();
     },
   };
+}
+
+/**
+ * Drop hail_registry + mark vessels.deleted_at for a channel that no
+ * longer exists on Discord. Called both from the ChannelDelete listener
+ * and from the post-login reconciliation pass.
+ */
+export function reconcileChannelGone(db: DB, channelId: string): void {
+  db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channelId);
+  db.prepare(
+    `UPDATE vessels SET deleted_at = ? WHERE channel_id = ? AND deleted_at IS NULL`,
+  ).run(Date.now(), channelId);
 }
 
 async function onChannelJoin(
@@ -150,6 +181,32 @@ async function createVesselFor(
     ],
   });
 
+  // Pre-check the perms we need before attempting the create — if the
+  // OAuth invite did not update the existing role, this is where the
+  // failure comes from and Discord's "Missing Permissions" carries no
+  // detail. Report which perms the controller is missing so the operator
+  // knows what to fix.
+  const me = await guild.members.fetchMe().catch(() => null);
+  const required = [
+    { name: 'ManageChannels', bit: PermissionFlagsBits.ManageChannels },
+    { name: 'ManageRoles', bit: PermissionFlagsBits.ManageRoles },
+    { name: 'MoveMembers', bit: PermissionFlagsBits.MoveMembers },
+    { name: 'ViewChannel', bit: PermissionFlagsBits.ViewChannel },
+    { name: 'Connect', bit: PermissionFlagsBits.Connect },
+    { name: 'SendMessages', bit: PermissionFlagsBits.SendMessages },
+  ] as const;
+  const missing = me === null
+    ? required.map((r) => r.name)
+    : required.filter((r) => !me.permissions.has(r.bit)).map((r) => r.name);
+  if (missing.length > 0) {
+    console.error(
+      `vessel: controller is missing guild perms in ${guild.id}: ${missing.join(', ')}. ` +
+      'Kick the controller from this guild and re-invite it; Discord does not refresh ' +
+      'an existing bot role on re-invite.',
+    );
+    return;
+  }
+
   let channel: VoiceBasedChannel;
   try {
     channel = await guild.channels.create({
@@ -160,7 +217,33 @@ async function createVesselFor(
       permissionOverwrites: overwrites,
     });
   } catch (err) {
-    console.error(`vessel: create failed for ${member.user.tag} in ${guild.id}: ${errMsg(err)}`);
+    const code = (err as { code?: unknown; rawError?: { message?: string } }).code;
+    const rawMessage = (err as { rawError?: { message?: string } }).rawError?.message;
+    console.error(
+      `vessel: create failed for ${member.user.tag} in ${guild.id}: ` +
+      `code=${String(code)} raw="${rawMessage ?? ''}" ${errMsg(err)}`,
+    );
+    // On a 50013 with a parent set, dump the controller's effective perms
+    // ON that category so the operator can see which ALLOWs it lacks
+    // there — that is by far the most common cause of this error.
+    if (code === 50013 && parent !== null && me !== null) {
+      const parentChannel = await guild.channels.fetch(parent).catch(() => null);
+      if (parentChannel !== null) {
+        const effective = me.permissionsIn(parentChannel);
+        const missingHere = required.filter((r) => !effective.has(r.bit)).map((r) => r.name);
+        console.error(
+          `vessel: parent category ${parent} ("${parentChannel.name}") — ` +
+          `controller effective perms: ${effective.toArray().join(', ')}`,
+        );
+        if (missingHere.length > 0) {
+          console.error(
+            `vessel: category-level DENY overrides guild perms for: ${missingHere.join(', ')}. ` +
+            'Fix: server settings → the category → Permissions → add an override for the ' +
+            'controller bot that Allows those perms, or remove the deny.',
+          );
+        }
+      }
+    }
     return;
   }
 
@@ -175,15 +258,18 @@ async function createVesselFor(
     return false;
   });
 
-  const welcomeLines = [
-    `🛰️ **Welcome to your channel, ${member.toString()}.**`,
-    moved
-      ? 'The control panel — rename / lock / limit / kick / allow-hails / hail — arrives in a later step.'
-      : 'Discord blocks the bot from moving you into voice channels ' +
-        '(most often because you are the guild owner). Join this channel manually to activate it.',
-  ];
-  await channel.send({ content: welcomeLines.join('\n') }).catch((err) => {
-    console.error(`vessel: welcome message failed: ${errMsg(err)}`);
+  const state = getVesselState(cfg.db, channel.id);
+  if (state === null) {
+    console.error(`vessel: state lookup failed for freshly-created ${channel.id}`);
+    return;
+  }
+  const panel = buildPanel(state);
+  const notice = moved
+    ? ''
+    : '\n_Discord blocks the bot from moving you (most often because you are the guild owner). ' +
+      'Join this channel manually to activate it._';
+  await channel.send({ content: `${panel.content}${notice}`, components: panel.components }).catch((err) => {
+    console.error(`vessel: panel post failed: ${errMsg(err)}`);
   });
 }
 
@@ -212,10 +298,17 @@ async function onChannelLeave(
   `).get(channelId) as VesselRow | undefined;
   if (vessel === undefined) return;
 
-  // Owner-leaves side effect: drop hail_registry. Rename back to 🔊 waits
-  // until the callsign registry lands (a later step).
+  // Owner-leaves side effect: drop hail_registry, and force-close any
+  // hail this vessel is currently part of. Rename back to 🔊 waits on
+  // a subsequent Rename click — the ~2/10min bucket does not let us
+  // both drop the row and rename immediately.
   if (vessel.owner_user_id === state.id) {
     cfg.db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channelId);
+    if (cfg.hails !== null) {
+      await cfg.hails.handleOwnerLeft(state.guild.id, state.id, channelId).catch((err) => {
+        console.error(`vessel: hail close on owner-leave failed: ${errMsg(err)}`);
+      });
+    }
   }
 
   // Empty check. Uses the channel's live members map — voiceStateUpdate

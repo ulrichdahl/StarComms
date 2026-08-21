@@ -20,13 +20,17 @@ import { loadConfig, redactMember } from './lib/config.js';
 import { openDb } from './lib/db.js';
 import { loadCueSet, resolveCuePaths, type CueSet } from './lib/cues.js';
 import { bootSweep, formatSweep } from './fleet/boot-sweep.js';
+import { runReconciliation } from './fleet/reconcile.js';
 import { Fleet } from './fleet/manager.js';
 import { startStatusServer } from './fleet/status.js';
+import { Events } from 'discord.js';
 import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
 import { makeInitHandler } from './commands/init.js';
 import {
   makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
 } from './commands/callsigns.js';
+import { makePanelDispatcher } from './commands/panel-handlers.js';
+import { HAIL_END_PREFIX, HailManager } from './session/hail.js';
 import { startVesselService } from './session/vessel.js';
 
 async function main(): Promise<void> {
@@ -69,6 +73,19 @@ async function main(): Promise<void> {
   await fleet.start();
   console.log('all members ready');
 
+  // Post-login reconciliation: with the controller connected we can now
+  // ask Discord which of the tracked vessels still exist and drop rows
+  // for those that don't.
+  try {
+    const result = await runReconciliation(db, fleet.controllerClient());
+    console.log(
+      `reconcile: checked ${result.vesselsChecked} vessel(s), ` +
+      `dropped ${result.vesselsMissing} gone`,
+    );
+  } catch (err) {
+    console.warn(`reconcile: failed — ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const handlers: Record<string, SubcommandHandler> = {
     init: makeInitHandler(config, db),
     register: makeRegisterHandler(db),
@@ -86,13 +103,49 @@ async function main(): Promise<void> {
   const registrar = makeRegistrar(config.controller, fleet.controllerClient(), handlers);
   await registrar.start();
 
-  const vessels = startVesselService({ fleet, db });
+  // Hail service. Requires cues; if cues never loaded, we surface a
+  // hail-service-disabled state so a Hail click fails cleanly rather
+  // than crashing at cue-lookup time.
+  const hails = cues !== null
+    ? new HailManager({
+        db, fleet, cues,
+        silenceCloseMs: config.defaults.hailSilenceCloseMs,
+        maxHoldMs: config.defaults.hailMaxHoldMs,
+      })
+    : null;
+  if (hails === null) {
+    console.warn('hail: service disabled — cues did not load');
+  }
+
+  // Component + modal routing. `sc:panel:` and `sc:hail:` prefixes are
+  // routed here; everything else falls through to the slash registrar's
+  // own listener.
+  const dispatchPanel = hails !== null ? makePanelDispatcher({ db, fleet, hails }) : null;
+  fleet.controllerClient().on(Events.InteractionCreate, (interaction) => {
+    if (interaction.isChatInputCommand()) return;
+    if (!('customId' in interaction) || typeof interaction.customId !== 'string') return;
+    const id = interaction.customId;
+    if (id.startsWith('sc:panel:')) {
+      if (dispatchPanel !== null) {
+        void dispatchPanel(interaction as Parameters<typeof dispatchPanel>[0]);
+      }
+      return;
+    }
+    if (id.startsWith(HAIL_END_PREFIX) && interaction.isButton()) {
+      const hailId = Number(id.slice(HAIL_END_PREFIX.length));
+      if (Number.isFinite(hailId) && hails !== null) {
+        void interaction.deferUpdate().catch(() => {});
+        void hails.handleEndButton(hailId, interaction.user.id).catch((err) => {
+          console.error(`hail end button: ${err instanceof Error ? err.message : err}`);
+        });
+      }
+      return;
+    }
+  });
+
+  const vessels = startVesselService({ fleet, db, hails });
 
   const server = startStatusServer({ port, fleet, sweep, startedAt });
-
-  // Reference the loaded cues so the linter does not flag the variable —
-  // they will be threaded into the hail path when step 6 lands.
-  void cues;
 
   let exiting = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -101,6 +154,7 @@ async function main(): Promise<void> {
     console.log(`\n${signal} — shutting down`);
     server.close();
     vessels.stop();
+    if (hails !== null) await hails.drain();
     await fleet.stop();
     db.close();
     process.exit(0);

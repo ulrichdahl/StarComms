@@ -265,7 +265,7 @@
       <tr><td><strong>Lock</strong> / <strong>Unlock</strong></td><td>Toggle. Locked adds a permission overwrite denying <code>CONNECT</code> to <code>@everyone</code>. Existing members are unaffected.</td></tr>
       <tr><td><strong>Limit</strong></td><td>Opens a modal with a numeric input. Sets <code>user_limit</code> on the channel. 0 disables the limit.</td></tr>
       <tr><td><strong>Kick</strong></td><td>Opens a member-select from the channel's current members. Disconnects the selected member from voice.</td></tr>
-      <tr><td><strong>Allow hails</strong> / <strong>Disable hails</strong></td><td>Requires the owner to be pre-registered (§5). Allow adds a row to <code>hail_registry</code> and renames the channel <code>🔊 …</code> → <code>🛰️ [callsign]</code>. Disable removes the registry row and leaves the visual as is.</td></tr>
+      <tr><td><strong>Allow hails</strong> / <strong>Disable hails</strong></td><td>Requires the owner to be pre-registered (§5). Allow adds a row to <code>hail_registry</code> and renames the channel <code>🔊 …</code> → <code>🛰️ [callsign]</code>. Disable removes the registry row and renames back to <code>🔊 [display name]</code>. Both PATCHes count against Discord's ~2-per-10-min rename bucket, so Allow → Disable → Rename in quick succession will 429 on Rename with a ~10 min wait.</td></tr>
       <tr><td><strong>Hail</strong></td><td>Requires the owner's own channel to have hails enabled. Opens a channel-select populated from <code>hail_registry</code> (excluding self). See §6.</td></tr>
     </tbody>
   </table></div>
