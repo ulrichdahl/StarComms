@@ -41,7 +41,10 @@ import type { DB } from '../lib/db.js';
 import type { Fleet } from '../fleet/manager.js';
 import { DetectionListener, type Detection } from '../detection/listener.js';
 import type { SttDriver } from '../detection/stt.js';
+import type { CueSet } from '../lib/cues.js';
+import type { Locale } from '../detection/grammar.js';
 import { netsFor, type NetRole, type NetSpec, type SessionMode, type SessionNet } from './model.js';
+import { SessionRouter } from './router.js';
 
 export type MoveOwnerResult =
   | { moved: true }
@@ -70,12 +73,18 @@ export interface OpenResult {
 interface SessionRuntime {
   sessionId: number;
   detection: DetectionListener | null;
+  router: SessionRouter | null;
 }
 const runtime = new Map<string, SessionRuntime>();
 
 /** Access the live detection listener for a guild's session, if any. */
 export function detectionFor(guildId: string): DetectionListener | null {
   return runtime.get(guildId)?.detection ?? null;
+}
+
+/** Access the live router (auto-hail) for a guild's session, if any. */
+export function routerFor(guildId: string): SessionRouter | null {
+  return runtime.get(guildId)?.router ?? null;
 }
 
 export interface CloseResult {
@@ -100,8 +109,14 @@ export async function openSession(args: {
   stt?: SttDriver;
   /** Callback for every recognised utterance; step 6b routes these into the state machine. */
   onDetection?: (d: Detection) => void;
+  /**
+   * When supplied together with `stt`, the SessionRouter auto-opens a
+   * route from the primary net to a recognised target callsign. Contains
+   * the cue set + locale (per-guild) + timers.
+   */
+  autoHail?: { cues: CueSet; locale: Locale };
 }): Promise<OpenResult> {
-  const { guild, ownerId, mode, squads, fleet, db, stt, onDetection } = args;
+  const { guild, ownerId, mode, squads, fleet, db, stt, onDetection, autoHail } = args;
 
   const existing = db.prepare(
     `SELECT id FROM sessions WHERE guild_id = ? AND ended_at IS NULL`,
@@ -272,6 +287,7 @@ export async function openSession(args: {
   // (§5). If no STT driver was supplied, skip — the fleet still opens
   // fine, just doesn't recognise call-ups yet.
   let detection: DetectionListener | null = null;
+  let router: SessionRouter | null = null;
   if (stt !== undefined && primary !== undefined) {
     const mainUserId = fleet.controllerClient().user?.id;
     if (mainUserId !== undefined) {
@@ -286,11 +302,32 @@ export async function openSession(args: {
           detection.on('detection', onDetection);
         }
         console.log(`session ${sessionId}: detection attached to ${primary.callsign} (stt=${stt.name})`);
+
+        // Auto-hail: recognised call-ups drive runSessionRelay without
+        // waiting for /star-bridge hail. Requires stt + autoHail config.
+        if (autoHail !== undefined) {
+          const gRow = db.prepare(
+            `SELECT silence_close_ms, max_hold_ms FROM guilds WHERE id = ?`,
+          ).get(guild.id) as { silence_close_ms: number; max_hold_ms: number } | undefined;
+          router = new SessionRouter({
+            sessionId,
+            guildId: guild.id,
+            locale: autoHail.locale,
+            fleet,
+            nets,
+            cues: autoHail.cues,
+            db,
+            silenceCloseMs: gRow?.silence_close_ms ?? 2000,
+            maxHoldMs: gRow?.max_hold_ms ?? 60_000,
+            detection,
+          });
+          console.log(`session ${sessionId}: auto-hail router armed (locale=${autoHail.locale})`);
+        }
       }
     }
   }
 
-  runtime.set(guild.id, { sessionId, detection });
+  runtime.set(guild.id, { sessionId, detection, router });
   return { sessionId, guildId: guild.id, mode, ownerId, nets, moveOwner, detection };
 }
 
@@ -309,10 +346,11 @@ export async function closeSession(args: {
   }
   const sessionId = row.id;
 
-  // Tear down detection first so no in-flight utterance tries to route to
-  // channels we are about to delete.
+  // Tear down router + detection first so no in-flight utterance tries to
+  // route to channels we are about to delete.
   const rt = runtime.get(guild.id);
   if (rt !== undefined) {
+    rt.router?.stop();
     rt.detection?.stop();
     runtime.delete(guild.id);
   }

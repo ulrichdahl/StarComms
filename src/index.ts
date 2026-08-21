@@ -26,6 +26,7 @@ import { provisionGuild } from './pool/provisioning.js';
 import { closeSession, detectionFor, openSession, SessionError } from './session/lifecycle.js';
 import type { SessionMode } from './session/model.js';
 import { connectionFor, runSessionRelay } from './session/relay.js';
+import type { Locale } from './detection/grammar.js';
 import { FakeDriver, WhisperLocalDriver, type SttDriver } from './detection/stt.js';
 
 async function main(): Promise<void> {
@@ -152,9 +153,13 @@ async function main(): Promise<void> {
       const mode = interaction.options.getString('mode', true) as SessionMode;
       const squads = interaction.options.getInteger('squads', true);
       try {
+        const autoHail = cues !== null && stt !== null
+          ? { cues, locale: (config.defaults.locale as Locale) }
+          : undefined;
         const result = await openSession({
           guild, ownerId: interaction.user.id, mode, squads, fleet, db,
           stt: stt ?? undefined,
+          autoHail,
           onDetection: (d) => {
             console.log(
               `detection: [${d.userId}] "${d.transcript.text}" ` +
