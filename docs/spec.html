@@ -129,9 +129,9 @@
     <b>Runtime</b> Node 22 / TS · <code>discord.js</code> + <code>@discordjs/voice ^0.19.2</code><br>
     <b>Fleet</b> N Discord applications, one voice connection per app per guild · v1 ships 4 (1 controller + 3 relays)<br>
     <b>State</b> SQLite (WAL) on host bind mount · <b>Deploy</b> Docker Compose, dev + prod overlays<br>
-    <b>Trigger</b> UI buttons and slash commands · <em>no</em> speech recognition anywhere<br>
+    <b>Trigger</b> UI buttons and slash commands<br>
     <b>Protocol</b> hail → cue pair → bidirectional relay → per-channel end button or 10 s all-quiet<br>
-    <b>Locale</b> en, da (interface strings only — no voice model dependency)
+    <b>Locale</b> en, da
   </div>
 
   <nav class="toc">
@@ -159,7 +159,7 @@
 
   <p><em>Star Comms</em> is a Discord bot fleet that opens brief, cue-signalled voice-to-voice bridges between separate voice channels in one guild. It is aimed at slow-tempo cooperative play — industrial gameplay, exploration, coordination between wings, station comms — where the participants sit in their own channels and occasionally need to talk to another channel's owner without either party leaving their own voice channel.</p>
 
-  <p>A channel owner presses a button, the bot picks a target from a directory of hailable channels, and audio flows both ways for as long as anyone talks. No speech recognition anywhere; every action is user-initiated through slash commands or button clicks.</p>
+  <p>A channel owner presses a button, the bot picks a target from a directory of hailable channels, and audio flows both ways for as long as anyone talks. Every action is user-initiated through slash commands or button clicks.</p>
 
   <h4>In</h4>
   <ul>
@@ -175,16 +175,14 @@
 
   <h4>Out</h4>
   <ul>
-    <li>Speech recognition anywhere in the pipeline. No STT, no VAD, no wake-word.</li>
-    <li>Audio recording or archival. No audio touches disk.</li>
-    <li>Persistent voice channels not created via the join-to-create trigger — Star Comms does not manage the guild's static voice layout.</li>
+    <li>Audio recording, archival, or transcript. No audio touches disk.</li>
+    <li>Star Comms does not manage the guild's static voice layout — only vessels created via join-to-create.</li>
     <li>Cross-guild bridges within one hail.</li>
-    <li>Text mirror / transcript of a hail. There is no transcript because there is no transcriber.</li>
   </ul>
 
   <div class="call">
-    <span class="lab">What replaces the transcript</span>
-    <p>An audit record per hail — who called whom, when, duration, participating channel ids. Text log only; no audio.</p>
+    <span class="lab">Audit trail</span>
+    <p>Every hail is written to a text-only audit: who called whom, when, for how long, and which channels participated. No audio content.</p>
   </div>
 </section>
 
@@ -315,7 +313,8 @@
     <span class="st hi">select-menu of hail_registry</span><span class="ar">→</span>
     <span class="st hi">allocate free relay bots</span><span class="ar">→</span>
     <span class="st">bots join each participating channel</span><span class="ar">→</span>
-    <span class="st hi">Ring / Attention / Ready cues</span><span class="ar">→</span>
+    <span class="st hi">Ring in locked, wait for accept</span><span class="ar">→</span>
+    <span class="st hi">Ready + Attention synced</span><span class="ar">→</span>
     <span class="st">bidirectional relay</span>
   </div>
 
@@ -325,9 +324,14 @@
     <li>The owner of a hail-enabled vessel clicks <strong>Hail</strong> on their control panel.</li>
     <li>The bot presents a multi-select menu of currently-registered hail channels, excluding the owner's own vessel. Selecting no targets cancels.</li>
     <li>The allocator picks a free relay bot for each participating channel — including the caller's own. If not enough bots are free the caller receives an ephemeral <em>"All relays are busy — try again in a moment"</em> and the hail is cancelled.</li>
-    <li>Each allocated bot joins its assigned channel and enters the acceptance phase per §6.2.</li>
-    <li>Once accepted, all bots play <code>Ready</code> at the caller and <code>Attention</code> at the targets on the same instant (§7). Cue duration D<sub>c</sub> masks the join latency and ensures the message body starts after every listener has already heard the alert.</li>
-    <li>The bidirectional relay opens. Each participating channel gets an <strong>End hail</strong> button posted in its voice-text chat.</li>
+    <li>Each allocated bot joins its assigned channel. Unlocked targets are considered accepted immediately. Locked targets enter the ring phase per §6.2.</li>
+    <li>Once every selected target has resolved (accepted or declined):
+      <ul>
+        <li>If at least one target accepted: all bots on the caller's side and every accepted target's side play <code>Ready</code> and <code>Attention</code> respectively on the same instant (§7). Cue duration D<sub>c</sub> masks the join latency and ensures the message body starts after every listener has already heard the alert.</li>
+        <li>If every target declined or timed out: the caller's bot plays <code>Busy</code>; every allocated bot leaves; the hail ends without opening.</li>
+      </ul>
+    </li>
+    <li>The bidirectional relay opens between the caller and the accepted targets. Each participating channel gets an <strong>End hail</strong> button posted in its voice-text chat.</li>
   </ol>
 
   <h3>Acceptance</h3>
@@ -335,13 +339,11 @@
   <div class="tw"><table>
     <thead><tr><th>Target state</th><th>Behaviour</th></tr></thead>
     <tbody>
-      <tr><td>Hail-enabled, <strong>unlocked</strong></td><td>Auto-accept after one <code>Ring</code>. The hail opens after D<sub>c</sub>.</td></tr>
-      <tr><td>Hail-enabled, <strong>locked</strong></td><td>Ring for up to 20 s — <code>Ring</code> cue repeated at ~4 s intervals — while an <strong>Accept / Decline</strong> button pair is posted in the target's voice-text chat. Accept opens the hail. Decline plays <code>Busy</code> back to the caller and the leg drops. No click within 20 s auto-declines.</td></tr>
+      <tr><td>Hail-enabled, <strong>unlocked</strong></td><td>Auto-accept. No <code>Ring</code>. <code>Attention</code> plays in that channel at the synchronised open (step 5).</td></tr>
+      <tr><td>Hail-enabled, <strong>locked</strong></td><td>Bot joins the channel and plays <code>Ring</code> repeated at ~4 s intervals for up to 20 s, alongside an <strong>Accept / Decline</strong> button pair posted in the target's voice-text chat. Accept marks the target accepted. Decline or 20 s of inactivity marks it refused; the bot leaves the target channel silently.</td></tr>
       <tr><td>Not hail-enabled</td><td>Not listed in the caller's select menu in the first place — cannot be targeted.</td></tr>
     </tbody>
   </table></div>
-
-  <p>A hail can therefore fail with any subset of its selected targets declining. The remaining accepted targets open the hail with the caller. If <em>all</em> targets decline, the hail closes with <code>Busy</code> back at the caller and no bots stay behind.</p>
 
   <h3>Closing</h3>
 
@@ -370,15 +372,15 @@
   <div class="tw"><table>
     <thead><tr><th>Cue</th><th>Plays in</th><th>Trigger</th></tr></thead>
     <tbody>
-      <tr><td><code>Ready</code></td><td>caller's channel</td><td>hail opened, targets accepted, message body about to start</td></tr>
-      <tr><td><code>Attention</code></td><td>each accepted target channel</td><td>hail open, mirrors <code>Ready</code>'s timing</td></tr>
-      <tr><td><code>Ring</code></td><td>target channel</td><td>hail requested against that target. Plays once in unlocked channels; repeats up to 5× at ~4 s intervals in locked channels</td></tr>
-      <tr><td><code>Busy</code></td><td>caller's channel</td><td>a target refused (declined, timed out) or no bots free to allocate</td></tr>
-      <tr><td><code>End</code></td><td>the channel closing</td><td>a per-channel end, or hail-wide auto-close on all channels</td></tr>
+      <tr><td><code>Ready</code></td><td>caller's channel</td><td>every selected target has resolved and at least one accepted; the hail opens</td></tr>
+      <tr><td><code>Attention</code></td><td>each accepted target channel</td><td>same instant as <code>Ready</code></td></tr>
+      <tr><td><code>Ring</code></td><td>locked target channel</td><td>hail requested against a locked target; repeats every 4 s until Accept, Decline, or 20 s of no click</td></tr>
+      <tr><td><code>Busy</code></td><td>caller's channel</td><td>every selected target refused (declined or timed out), or the allocator had no free bots</td></tr>
+      <tr><td><code>End</code></td><td>the channel closing</td><td>a per-channel <strong>End hail</strong> button, or the hail-wide 10 s all-quiet auto-close</td></tr>
     </tbody>
   </table></div>
 
-  <p>Cue sets are per guild (shipped defaults or operator-supplied WAVs). All time-critical assets — <code>Ready</code>, <code>Attention</code>, <code>Ring</code> — must be equal length D<sub>c</sub>; startup validates this and fails loudly on mismatch, because the caller's <code>Ready</code> and each target's <code>Attention</code>/<code>Ring</code> start on the same instant and their end defines when the message body can start.</p>
+  <p>Cue sets are per guild (shipped defaults or operator-supplied WAVs). <code>Ready</code> and <code>Attention</code> must be equal length D<sub>c</sub> — startup validates and fails loudly on mismatch — because they play in different channels on the same instant, and their common end defines when the caller can start speaking. <code>Ring</code>, <code>Busy</code> and <code>End</code> play alone and are not subject to the strict-equal invariant, but the validator still checks their duration against D<sub>c</sub> ± 200 ms so operator-supplied packs stay coherent.</p>
 
   <h4>Timers</h4>
 
