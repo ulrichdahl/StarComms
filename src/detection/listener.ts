@@ -99,8 +99,20 @@ export class DetectionListener extends EventEmitter {
       this.speakers.set(userId, state);
 
       decoder.on('data', (chunk: Buffer) => this.onDecoded(userId, chunk));
-      decoder.on('error', () => { /* stream will close; state cleaned in release */ });
-      opus.on('error', () => { /* same */ });
+      // DAVE decryption failures propagate here occasionally at key-rotation
+      // boundaries; a listener MUST be attached or Node crashes on the
+      // Unhandled 'error' event. Log non-DAVE errors; silently drop DAVE
+      // failures (see CLAUDE.md).
+      decoder.on('error', (err: Error) => {
+        if (!/DecryptionFailed|Unencrypted/i.test(err.message)) {
+          console.error(`detection: decoder error for ${userId}: ${err.message}`);
+        }
+      });
+      opus.on('error', (err: Error) => {
+        if (!/DecryptionFailed|Unencrypted/i.test(err.message)) {
+          console.error(`detection: opus stream error for ${userId}: ${err.message}`);
+        }
+      });
 
       const release = (): void => {
         this.speakers.delete(userId);

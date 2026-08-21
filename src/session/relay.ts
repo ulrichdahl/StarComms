@@ -64,6 +64,22 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
   const targetPlayer = createAudioPlayer({
     behaviors: { noSubscriber: NoSubscriberBehavior.Play },
   });
+  // DAVE decryption occasionally fails at key-rotation boundaries (spec §15;
+  // `DecryptionFailed(UnencryptedWhenPassthroughDisabled)`), and the error
+  // propagates through AudioReceiveStream → AudioResource → AudioPlayer. If
+  // no listener is attached, Node crashes the process on the "Unhandled
+  // 'error' event". Swallow the transient; the next packet usually decrypts
+  // fine. See CLAUDE.md.
+  let daveDropped = 0;
+  const onPlayerError = (label: string) => (err: Error) => {
+    if (/DecryptionFailed|Unencrypted/i.test(err.message)) {
+      daveDropped++;
+      return;
+    }
+    console.error(`hail: ${label} error: ${err.message}`);
+  };
+  sourcePlayer.on('error', onPlayerError('sourcePlayer'));
+  targetPlayer.on('error', onPlayerError('targetPlayer'));
   const sourceSubscription = cfg.sourceConnection.subscribe(sourcePlayer);
   const targetSubscription = cfg.targetConnection.subscribe(targetPlayer);
 
@@ -90,6 +106,13 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
     const opusStream = cfg.sourceConnection.receiver.subscribe(cfg.commanderUserId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: cfg.silenceCloseMs },
     });
+    opusStream.on('error', (err: Error) => {
+      if (/DecryptionFailed|Unencrypted/i.test(err.message)) {
+        daveDropped++;
+        return;
+      }
+      console.error(`hail: opusStream error: ${err.message}`);
+    });
 
     const resource: AudioResource = createAudioResource(opusStream, { inputType: StreamType.Opus });
     targetPlayer.on('stateChange', (from, to) => {
@@ -107,7 +130,7 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
     // actually pushed to the connection — an honest measure of "did anything
     // get transmitted" that doesn't touch the stream.
     opusPackets = Math.round(resource.playbackDuration / 20);
-    console.log(`hail: ${cfg.commanderUserId} → target closed=${closedBy} playbackMs=${resource.playbackDuration} ~packets=${opusPackets}`);
+    console.log(`hail: ${cfg.commanderUserId} → target closed=${closedBy} playbackMs=${resource.playbackDuration} ~packets=${opusPackets} daveDropped=${daveDropped}`);
 
     // Out cue on both sides. On max_hold we cut the stream first so the
     // Out cue is not fighting the still-flowing opus for target's player.

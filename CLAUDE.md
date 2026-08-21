@@ -63,6 +63,15 @@ in v1.
   the second bot never actually joins. This bit us in step 3 — bravo appeared
   in the target channel and charlie never connected, with both `entersState`
   calls resolving Ready against the same shared connection.
+- **Every `AudioPlayer` and receive `opusStream` in the receive path must
+  have an `'error'` listener.** DAVE decryption occasionally fails at
+  key-rotation boundaries (`DecryptionFailed(UnencryptedWhenPassthroughDisabled)`,
+  spec §15), and the error propagates from `AudioReceiveStream` →
+  `AudioResource` → `AudioPlayer`. An unhandled `'error'` on any of those
+  crashes the whole Node process with `Unhandled 'error' event`. Swallow
+  the DAVE-specific message and continue — the next packet decrypts fine.
+  Log anything else. This bit us in step 6a during a live hail after ~1.2 s
+  of audio had already transmitted.
 - **`adapterCreator` must be built from the joining bot's own `Guild` object.**
   `guild.voiceAdapterCreator` binds to the WebSocket of whichever Client cached
   that Guild. If we take the guild from the interaction (controller's Client)
