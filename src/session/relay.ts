@@ -59,10 +59,20 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
   }
 
   const sourcePlayer = createAudioPlayer({
-    behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+    behaviors: {
+      noSubscriber: NoSubscriberBehavior.Play,
+      // Default is 5. On a receiver-stream relay a brief inter-word pause
+      // is easily 5+ missed 20 ms frames — the player would then abandon
+      // the resource even though the stream is still alive. Infinity keeps
+      // the resource attached across natural speech pauses.
+      maxMissedFrames: Infinity,
+    },
   });
   const targetPlayer = createAudioPlayer({
-    behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+    behaviors: {
+      noSubscriber: NoSubscriberBehavior.Play,
+      maxMissedFrames: Infinity,
+    },
   });
   // DAVE decryption occasionally fails at key-rotation boundaries (spec §15;
   // `DecryptionFailed(UnencryptedWhenPassthroughDisabled)`), and the error

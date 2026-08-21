@@ -63,6 +63,14 @@ in v1.
   the second bot never actually joins. This bit us in step 3 — bravo appeared
   in the target channel and charlie never connected, with both `entersState`
   calls resolving Ready against the same shared connection.
+- **Any `AudioPlayer` fed from a `receiver.subscribe` stream must set
+  `behaviors.maxMissedFrames: Infinity`.** The default is 5. During a
+  natural inter-word pause the receive stream's `.read()` returns null for
+  more than 5 consecutive 20 ms frames, and the player abandons the
+  resource even though the stream is still alive — the caller then hears
+  a couple of seconds of audio and permanent silence. Cue playback keeps
+  the default 5 (finite resources should not be immortal). This bit us in
+  step 6a's hail: 2080 ms of audio, then Idle, then max-hold timed out.
 - **Every `AudioPlayer` and receive `opusStream` in the receive path must
   have an `'error'` listener.** DAVE decryption occasionally fails at
   key-rotation boundaries (`DecryptionFailed(UnencryptedWhenPassthroughDisabled)`,
