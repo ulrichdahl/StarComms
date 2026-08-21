@@ -26,7 +26,7 @@ import {
   AudioPlayerStatus, EndBehaviorType, NoSubscriberBehavior, StreamType,
   VoiceConnectionStatus,
   createAudioPlayer, createAudioResource, getVoiceConnection,
-  type AudioPlayer, type VoiceConnection,
+  type AudioPlayer, type AudioResource, type VoiceConnection,
 } from '@discordjs/voice';
 import { createCueResource, type CueSet } from '../lib/cues.js';
 
@@ -81,19 +81,33 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
 
     // Subscribe to the commander's SSRC. `AfterSilence` gives us the
     // natural close on silence; the max-hold is a separate race below.
+    // NB: do NOT attach a `.on('data')` listener to this stream —
+    // AudioResource with StreamType.Opus reads via `.read()`, and adding
+    // a data listener flips the Readable into flowing mode where read()
+    // returns null. The player then transmits nothing. Diagnostics come
+    // from AudioPlayer state transitions and `AudioResource.playbackDuration`
+    // instead.
     const opusStream = cfg.sourceConnection.receiver.subscribe(cfg.commanderUserId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: cfg.silenceCloseMs },
     });
-    opusStream.on('data', () => { opusPackets++; });
 
-    const resource = createAudioResource(opusStream, { inputType: StreamType.Opus });
+    const resource: AudioResource = createAudioResource(opusStream, { inputType: StreamType.Opus });
+    targetPlayer.on('stateChange', (from, to) => {
+      if (from.status !== to.status) {
+        console.log(`hail: targetPlayer ${from.status} -> ${to.status}`);
+      }
+    });
     targetPlayer.play(resource);
 
     const closedBy = await Promise.race<'silence' | 'max_hold'>([
       new Promise<'silence'>((resolve) => opusStream.once('end', () => resolve('silence'))),
       new Promise<'max_hold'>((resolve) => setTimeout(() => resolve('max_hold'), cfg.maxHoldMs)),
     ]);
-    console.log(`hail: ${cfg.commanderUserId} → target closed=${closedBy} opusPackets=${opusPackets}`);
+    // `resource.playbackDuration` accumulates ms of audio the player has
+    // actually pushed to the connection — an honest measure of "did anything
+    // get transmitted" that doesn't touch the stream.
+    opusPackets = Math.round(resource.playbackDuration / 20);
+    console.log(`hail: ${cfg.commanderUserId} → target closed=${closedBy} playbackMs=${resource.playbackDuration} ~packets=${opusPackets}`);
 
     // Out cue on both sides. On max_hold we cut the stream first so the
     // Out cue is not fighting the still-flowing opus for target's player.
