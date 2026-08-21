@@ -96,6 +96,11 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
   const started = Date.now();
   let opusPackets = 0;
   let errorMessage: string | null = null;
+  const hlog = (msg: string): void => {
+    const t = Date.now() - started;
+    const s = String(t).padStart(6);
+    console.log(`hail +${s}ms ${msg}`);
+  };
 
   try {
     // Cues, same tick — spec §5 equal-duration invariant means source's
@@ -113,6 +118,7 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
     // returns null. The player then transmits nothing. Diagnostics come
     // from AudioPlayer state transitions and `AudioResource.playbackDuration`
     // instead.
+    hlog(`subscribing to opus from ${cfg.commanderUserId} (silenceClose=${cfg.silenceCloseMs}ms)`);
     const opusStream = cfg.sourceConnection.receiver.subscribe(cfg.commanderUserId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: cfg.silenceCloseMs },
     });
@@ -123,24 +129,37 @@ export async function runSessionRelay(cfg: SessionRelayConfig): Promise<SessionR
       }
       console.error(`hail: opusStream error: ${err.message}`);
     });
+    opusStream.on('end', () => hlog('opusStream end'));
+    opusStream.on('close', () => hlog('opusStream close'));
 
     const resource: AudioResource = createAudioResource(opusStream, { inputType: StreamType.Opus });
     targetPlayer.on('stateChange', (from, to) => {
       if (from.status !== to.status) {
-        console.log(`hail: targetPlayer ${from.status} -> ${to.status}`);
+        hlog(`targetPlayer ${from.status} -> ${to.status} (resource.ended=${resource.ended})`);
       }
     });
     targetPlayer.play(resource);
 
-    const closedBy = await Promise.race<'silence' | 'max_hold'>([
-      new Promise<'silence'>((resolve) => opusStream.once('end', () => resolve('silence'))),
-      new Promise<'max_hold'>((resolve) => setTimeout(() => resolve('max_hold'), cfg.maxHoldMs)),
-    ]);
-    // `resource.playbackDuration` accumulates ms of audio the player has
-    // actually pushed to the connection — an honest measure of "did anything
-    // get transmitted" that doesn't touch the stream.
+    // Race silence-close against max-hold. AfterSilence's cleanup path
+    // destroys the AudioReceiveStream, which emits `'close'` — NOT `'end'`
+    // — so both events are treated as silence. Not listening for 'close'
+    // was why previous runs reported closedBy=max_hold even after the
+    // player had gone Idle a long time ago.
+    const closedBy = await new Promise<'silence' | 'max_hold'>((resolve) => {
+      const done = (value: 'silence' | 'max_hold'): void => {
+        clearTimeout(timer);
+        opusStream.removeListener('end', onEnd);
+        opusStream.removeListener('close', onClose);
+        resolve(value);
+      };
+      const onEnd = (): void => done('silence');
+      const onClose = (): void => done('silence');
+      opusStream.once('end', onEnd);
+      opusStream.once('close', onClose);
+      const timer = setTimeout(() => done('max_hold'), cfg.maxHoldMs);
+    });
     opusPackets = Math.round(resource.playbackDuration / 20);
-    console.log(`hail: ${cfg.commanderUserId} → target closed=${closedBy} playbackMs=${resource.playbackDuration} ~packets=${opusPackets} daveDropped=${daveDropped}`);
+    hlog(`closed=${closedBy} playbackMs=${resource.playbackDuration} ~packets=${opusPackets} daveDropped=${daveDropped}`);
 
     // Out cue on both sides. On max_hold we cut the stream first so the
     // Out cue is not fighting the still-flowing opus for target's player.
