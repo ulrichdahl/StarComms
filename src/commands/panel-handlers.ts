@@ -56,16 +56,20 @@ export function makePanelDispatcher(deps: PanelDeps) {
     const id = interaction.customId;
     try {
       switch (id) {
-        case PANEL_IDS.rename: return handleRenameClick(interaction as ButtonInteraction);
-        case PANEL_IDS.renameSubmit: return handleRenameSubmit(deps, interaction as ModalSubmitInteraction);
-        case PANEL_IDS.lockToggle: return handleLockToggle(deps, interaction as ButtonInteraction);
-        case PANEL_IDS.limit: return handleLimitClick(deps, interaction as ButtonInteraction);
-        case PANEL_IDS.limitSubmit: return handleLimitSubmit(deps, interaction as ModalSubmitInteraction);
-        case PANEL_IDS.kick: return handleKickClick(deps, interaction as ButtonInteraction);
-        case PANEL_IDS.kickPick: return handleKickPick(deps, interaction as UserSelectMenuInteraction);
-        case PANEL_IDS.hailsToggle: return handleHailsToggle(deps, interaction as ButtonInteraction);
-        case PANEL_IDS.hail: return handleHailClick(deps, interaction as ButtonInteraction);
-        case PANEL_IDS.hailPick: return handleHailPick(deps, interaction as StringSelectMenuInteraction);
+        // `return await` is intentional — `try { return promise }` in an
+        // async function does NOT catch the promise's later rejection.
+        // Without the await, a Discord API error out of a handler flew
+        // right past this try/catch and crashed the process.
+        case PANEL_IDS.rename: return await handleRenameClick(interaction as ButtonInteraction);
+        case PANEL_IDS.renameSubmit: return await handleRenameSubmit(deps, interaction as ModalSubmitInteraction);
+        case PANEL_IDS.lockToggle: return await handleLockToggle(deps, interaction as ButtonInteraction);
+        case PANEL_IDS.limit: return await handleLimitClick(deps, interaction as ButtonInteraction);
+        case PANEL_IDS.limitSubmit: return await handleLimitSubmit(deps, interaction as ModalSubmitInteraction);
+        case PANEL_IDS.kick: return await handleKickClick(deps, interaction as ButtonInteraction);
+        case PANEL_IDS.kickPick: return await handleKickPick(deps, interaction as UserSelectMenuInteraction);
+        case PANEL_IDS.hailsToggle: return await handleHailsToggle(deps, interaction as ButtonInteraction);
+        case PANEL_IDS.hail: return await handleHailClick(deps, interaction as ButtonInteraction);
+        case PANEL_IDS.hailPick: return await handleHailPick(deps, interaction as StringSelectMenuInteraction);
         default: return; // not our custom_id
       }
     } catch (err) {
@@ -119,7 +123,77 @@ function stripPrefix(name: string): { prefix: string; text: string } {
 }
 
 function isDiscordRateLimit(err: unknown): boolean {
-  return err instanceof Error && /rate|429|Missing Access.*name/i.test(err.message);
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: unknown }).code;
+  if (code === 429) return true;
+  return /rate/i.test(err.message);
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Dump what Discord thinks is set on a channel when we hit 50001.
+ * Reads from the guild cache so it works even if the bot has lost
+ * View on the channel itself — cache is populated from GUILD_CREATE
+ * regardless of View.
+ */
+async function logChannelPermsDiagnostic(
+  interaction: MessageComponentInteraction | ModalSubmitInteraction,
+  channelId: string,
+): Promise<void> {
+  try {
+    const guild = interaction.guild;
+    if (guild === null) return;
+    const cached = guild.channels.cache.get(channelId);
+    if (cached === undefined) {
+      console.error(`panel-diag: ${channelId} not in guild.channels.cache`);
+      return;
+    }
+    const parentId = 'parentId' in cached ? cached.parentId : null;
+    console.error(`panel-diag: ${channelId} parent=${parentId ?? '(none)'}`);
+    if ('permissionOverwrites' in cached) {
+      for (const [id, ow] of cached.permissionOverwrites.cache) {
+        console.error(
+          `panel-diag:   overwrite id=${id} type=${ow.type} ` +
+          `allow=[${ow.allow.toArray().join(',')}] deny=[${ow.deny.toArray().join(',')}]`,
+        );
+      }
+    }
+    const me = await guild.members.fetchMe().catch(() => null);
+    if (me !== null && 'permissionsIn' in me) {
+      console.error(
+        `panel-diag: controller effective on ${channelId}: ` +
+        me.permissionsIn(cached).toArray().join(','),
+      );
+    }
+
+    // Also dump the PARENT category — a category-level @everyone deny
+    // ViewChannel with no allow for the controller is the most common
+    // reason Discord refuses .setName even when child overwrites say
+    // it should be fine.
+    if (parentId !== null) {
+      const parent = guild.channels.cache.get(parentId);
+      if (parent !== undefined && 'permissionOverwrites' in parent) {
+        console.error(`panel-diag: parent category ${parentId} ("${parent.name}") overwrites:`);
+        for (const [id, ow] of parent.permissionOverwrites.cache) {
+          console.error(
+            `panel-diag:   overwrite id=${id} type=${ow.type} ` +
+            `allow=[${ow.allow.toArray().join(',')}] deny=[${ow.deny.toArray().join(',')}]`,
+          );
+        }
+        if (me !== null) {
+          console.error(
+            `panel-diag: controller effective on parent: ` +
+            me.permissionsIn(parent).toArray().join(','),
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`panel-diag: dump failed: ${errMsg(err)}`);
+  }
 }
 
 async function refreshPanel(
@@ -234,13 +308,12 @@ async function handleLockToggle(deps: PanelDeps, interaction: ButtonInteraction)
   );
   setVesselLocked(deps.db, state.channelId, nextLocked);
 
-  await interaction.reply({
-    content: nextLocked
-      ? 'Channel locked. Only invited members can join. Bots may still enter for hails.'
-      : 'Channel unlocked.',
-    flags: MessageFlags.Ephemeral,
-  });
-  await refreshPanel(deps, interaction);
+  // Atomically re-render the panel message the button lives on.
+  // Using `interaction.update` here — a two-call `reply + edit`
+  // pattern was leaving the panel stale when the follow-up edit
+  // 403'd on channels with narrower controller perms.
+  const rendered = buildPanel({ ...state, locked: nextLocked });
+  await interaction.update({ content: rendered.content, components: rendered.components });
 }
 
 // ---------------------------------------------------------------------------
@@ -286,11 +359,19 @@ async function handleLimitSubmit(deps: PanelDeps, interaction: ModalSubmitIntera
   await channel.setUserLimit(parsed, 'Star Comms: limit via panel');
   setVesselUserLimit(deps.db, state.channelId, parsed);
 
-  await interaction.reply({
-    content: parsed === 0 ? 'User limit removed.' : `User limit set to ${parsed}.`,
-    flags: MessageFlags.Ephemeral,
-  });
-  await refreshPanel(deps, interaction);
+  const rendered = buildPanel({ ...state, userLimit: parsed });
+  // Modal-submit only exposes .update when it was opened from a
+  // message component (the Limit button here). Guard for the type
+  // narrowing; the fallback edits the panel message directly.
+  if (interaction.isFromMessage()) {
+    await interaction.update({ content: rendered.content, components: rendered.components });
+  } else {
+    await refreshPanel(deps, interaction);
+    await interaction.reply({
+      content: parsed === 0 ? 'User limit removed.' : `User limit set to ${parsed}.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -382,32 +463,14 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
       const owner = await interaction.guild!.members.fetch(state.ownerUserId).catch(() => null);
       const displayName = owner?.displayName ?? state.callsign ?? 'channel';
       const targetName = `${PREFIX_UNREGISTERED} ${displayName}`.slice(0, CHANNEL_NAME_MAX);
-      try {
-        await channel.setName(targetName, 'Star Comms: disable-hails');
-        await interaction.reply({
-          content: `Hails disabled. Channel renamed to **${targetName}**.`,
-          flags: MessageFlags.Ephemeral,
-        });
-      } catch (err) {
-        if (isDiscordRateLimit(err)) {
-          await interaction.reply({
-            content:
-              'Hails disabled, but the channel could not be renamed — Discord\'s ' +
-              'rename limit for this channel is reached. Use the **Rename** button ' +
-              'in ~10 minutes.',
-            flags: MessageFlags.Ephemeral,
-          });
-        } else {
-          throw err;
-        }
-      }
-    } else {
-      await interaction.reply({
-        content: 'Hails disabled for this vessel.',
-        flags: MessageFlags.Ephemeral,
+      await channel.setName(targetName, 'Star Comms: disable-hails').catch((err) => {
+        console.error(`panel: disable-hails rename failed for ${state.channelId}: ${errMsg(err)}`);
+        void logChannelPermsDiagnostic(interaction, state.channelId);
       });
     }
-    await refreshPanel(deps, interaction);
+    // Panel update via interaction.update — atomically re-renders.
+    const rendered = buildPanel({ ...state, hailsEnabled: false });
+    await interaction.update({ content: rendered.content, components: rendered.components });
     return;
   }
 
@@ -424,25 +487,37 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
   const channel = await interaction.guild!.channels.fetch(state.channelId).catch(() => null);
   if (channel === null || channel.type !== ChannelType.GuildVoice) return;
 
-  const targetName = `${PREFIX_REGISTERED} ${state.callsign}`.slice(0, CHANNEL_NAME_MAX);
-  try {
-    await channel.setName(targetName, 'Star Comms: allow-hails');
-  } catch (err) {
-    if (isDiscordRateLimit(err)) {
-      await interaction.reply({
-        content: 'Discord\'s rename limit for this channel is reached. Try again in ~10 minutes.',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    throw err;
-  }
+  // Register in the directory first — that is the source of truth.
+  // The rename is a best-effort visual: on 429 (rate-limit exhausted) or
+  // 50001 (missing access on this channel) we still leave the vessel
+  // hail-enabled and update the panel; the operator gets a follow-up
+  // with what happened.
   registerVesselForHails(deps.db, state.channelId, state.guildId, state.callsign);
-  await interaction.reply({
-    content: `Hails enabled — this vessel is now in the directory as **${state.callsign}**.`,
-    flags: MessageFlags.Ephemeral,
+
+  const targetName = `${PREFIX_REGISTERED} ${state.callsign}`.slice(0, CHANNEL_NAME_MAX);
+  let renameOk = true;
+  let renameErr: unknown = null;
+  await channel.setName(targetName, 'Star Comms: allow-hails').catch((err) => {
+    renameOk = false;
+    renameErr = err;
+    console.error(`panel: allow-hails rename failed for ${state.channelId}: ${errMsg(err)}`);
+    void logChannelPermsDiagnostic(interaction, state.channelId);
   });
-  await refreshPanel(deps, interaction);
+
+  // Re-render the panel atomically. `interaction.update` swaps the
+  // button labels/styles even if the rename PATCH failed.
+  const rendered = buildPanel({ ...state, hailsEnabled: true, callsign: state.callsign });
+  await interaction.update({ content: rendered.content, components: rendered.components });
+
+  if (!renameOk) {
+    const detail = isDiscordRateLimit(renameErr)
+      ? 'Discord\'s rename limit for this channel is reached — try again in ~10 minutes.'
+      : 'Use the **Rename** button to set the name manually.';
+    await interaction.followUp({
+      content: `Hails enabled — the channel name could not be updated automatically. ${detail}`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +628,10 @@ function renderHailError(reason: string): string {
       return 'The target vessel disappeared before the hail could open.';
     case 'already_hailing':
       return 'This channel is already in a hail.';
+    case 'declined':
+      return 'The target declined the hail.';
+    case 'timeout':
+      return 'The target did not answer within the ring window.';
     default:
       return `Hail could not open: ${reason}`;
   }

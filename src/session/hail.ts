@@ -63,7 +63,10 @@ import type { CueSet } from '../lib/cues.js';
 import { createCueResource } from '../lib/cues.js';
 
 export type HailCloseReason =
-  | 'silence' | 'button' | 'initiator_left' | 'max_hold' | 'drain' | 'error';
+  | 'silence' | 'button' | 'initiator_left' | 'max_hold'
+  | 'drain' | 'error' | 'all_declined';
+
+export type RingDecision = 'accepted' | 'declined' | 'timeout';
 
 export interface HailServiceConfig {
   db: DB;
@@ -71,6 +74,8 @@ export interface HailServiceConfig {
   cues: CueSet;
   silenceCloseMs: number;
   maxHoldMs: number;
+  ringIntervalMs: number;
+  ringMaxMs: number;
 }
 
 export interface OpenHailInput {
@@ -98,8 +103,13 @@ interface HailLeg {
   connection: VoiceConnection;
   outboundPlayer: AudioPlayer;
   receiveStream: AudioReceiveStream | null;
+  receiveResource: import('@discordjs/voice').AudioResource | null;
   endMessage: Message | null;
   cueRole: 'ready' | 'attention';
+  /** DAVE decryption failures swallowed on this leg since the hail opened. */
+  daveDrops: number;
+  /** Speaking-start events observed for the leg's owner. */
+  speakingStarts: number;
 }
 
 interface Hail {
@@ -108,11 +118,17 @@ interface Hail {
   legs: [HailLeg, HailLeg];
   silenceTimer: NodeJS.Timeout | null;
   maxHoldTimer: NodeJS.Timeout | null;
+  heartbeatTimer: NodeJS.Timeout | null;
+  openedAt: number;
+  ringResolver: ((d: RingDecision) => void) | null;
+  ringMessage: Message | null;
   closing: boolean;
   closed: boolean;
 }
 
 export const HAIL_END_PREFIX = 'sc:hail:end:';
+export const HAIL_ACCEPT_PREFIX = 'sc:hail:accept:';
+export const HAIL_DECLINE_PREFIX = 'sc:hail:decline:';
 
 /**
  * Small helper — the fleet exposes `clientFor(nato)` but not the list
@@ -177,6 +193,27 @@ export class HailManager {
     if (hail === undefined) return;
     logHailEvent(this.cfg.db, hailId, 'ended_channel', actorUserId, null);
     await this._close(hail, 'button');
+  }
+
+  /**
+   * Accept / Decline button dispatch. Route from the top-level
+   * component dispatcher: `sc:hail:accept:<hailId>` and
+   * `sc:hail:decline:<hailId>` → this method with the matching
+   * decision. Owner-only: only the target vessel's owner may respond.
+   * Non-owners get an ephemeral refuse via the returned status; the
+   * dispatcher reads that and replies.
+   */
+  handleAcceptDecline(
+    hailId: number, decision: 'accepted' | 'declined', actorUserId: string,
+  ): 'ok' | 'not_owner' | 'not_ringing' {
+    const hail = this.hails.get(hailId);
+    if (hail === undefined) return 'not_ringing';
+    if (hail.ringResolver === null) return 'not_ringing';
+    const targetLeg = hail.legs.find((l) => l.role === 'target');
+    if (targetLeg === undefined) return 'not_ringing';
+    if (targetLeg.ownerUserId !== actorUserId) return 'not_owner';
+    hail.ringResolver(decision);
+    return 'ok';
   }
 
   /**
@@ -268,17 +305,59 @@ export class HailManager {
       const legs: [HailLeg, HailLeg] = [initiatorLeg, targetLeg];
       const hail: Hail = {
         hailId, guildId: input.guildId, legs,
-        silenceTimer: null, maxHoldTimer: null,
+        silenceTimer: null, maxHoldTimer: null, heartbeatTimer: null,
+        ringResolver: null, ringMessage: null,
+        openedAt: Date.now(),
         closing: false, closed: false,
       };
       this.hails.set(hailId, hail);
 
-      // Record participants.
+      // Ring phase — locked target has to accept before we proceed.
+      // Insert hail_participants rows once resolution is known, so the
+      // row's `decision` matches the outcome and satisfies NOT NULL.
+      const targetLocked = isChannelLocked(this.cfg.db, input.target.channelId);
+      let ringOutcome: RingDecision = 'accepted';
+      if (targetLocked) {
+        logHailEvent(this.cfg.db, hailId, 'ring_started', null, input.target.channelId);
+        ringOutcome = await this.ringForAccept(hail, targetLeg);
+      }
+
+      const now = Date.now();
+      if (ringOutcome !== 'accepted') {
+        // Log the outcome per participant, then wind down with Busy.
+        logHailEvent(
+          this.cfg.db, hailId,
+          ringOutcome === 'declined' ? 'declined' : 'timeout',
+          null, input.target.channelId,
+        );
+        this.cfg.db.prepare(`
+          INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, left_at, decision)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(hailId, initiatorLeg.channelId, initiatorLeg.botNato, now, now, 'accepted');
+        this.cfg.db.prepare(`
+          INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, left_at, decision)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          hailId, targetLeg.channelId, targetLeg.botNato, now, now,
+          ringOutcome === 'declined' ? 'declined' : 'timed_out',
+        );
+        await this.refuseHail(hail, initiatorLeg, targetLeg);
+        return { ok: false, reason: ringOutcome };
+      }
+
+      // Accepted (either auto or after Accept click). Record both
+      // participants + log the accept event when a real click happened.
       for (const leg of legs) {
         this.cfg.db.prepare(`
           INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, decision)
           VALUES (?, ?, ?, ?, ?)
-        `).run(hailId, leg.channelId, leg.botNato, Date.now(), 'accepted');
+        `).run(hailId, leg.channelId, leg.botNato, now, 'accepted');
+      }
+      if (targetLocked) {
+        logHailEvent(
+          this.cfg.db, hailId, 'accepted',
+          targetLeg.ownerUserId, targetLeg.channelId,
+        );
       }
 
       // Cues concurrent, then wait D_c so relay audio does not step on them.
@@ -301,11 +380,12 @@ export class HailManager {
         });
       }
 
-      // Silence + max-hold timers.
+      // Silence + max-hold timers + telemetry heartbeat.
       this.armSilence(hail);
       hail.maxHoldTimer = setTimeout(() => {
         void this._close(hail, 'max_hold').catch(() => {});
       }, this.cfg.maxHoldMs);
+      this.startHeartbeat(hail);
 
       return { ok: true, hailId };
     } catch (err) {
@@ -363,13 +443,8 @@ export class HailManager {
         maxMissedFrames: Infinity,
       },
     });
-    outboundPlayer.on('error', (err) => {
-      if (isDaveError(err)) return;
-      console.error(`hail: outbound player error on ${spec.channelId}: ${err.message}`);
-    });
-    connection.subscribe(outboundPlayer);
 
-    return {
+    const leg: HailLeg = {
       role: spec.role,
       channelId: spec.channelId,
       guildId: spec.guildId,
@@ -379,9 +454,35 @@ export class HailManager {
       connection,
       outboundPlayer,
       receiveStream: null,
+      receiveResource: null,
       endMessage: null,
       cueRole: spec.cueRole,
+      daveDrops: 0,
+      speakingStarts: 0,
     };
+
+    outboundPlayer.on('error', (err) => {
+      if (isDaveError(err)) { leg.daveDrops += 1; return; }
+      console.error(`hail: outbound player error on ${spec.channelId} [${spec.botNato}]: ${err.message}`);
+    });
+    outboundPlayer.on('stateChange', (from, to) => {
+      if (from.status !== to.status) {
+        console.log(
+          `hail-diag: player ${spec.botNato}→${spec.channelId} ` +
+          `${from.status} → ${to.status}`,
+        );
+      }
+    });
+    connection.on('stateChange', (from, to) => {
+      if (from.status === to.status) return;
+      console.log(
+        `hail-diag: connection ${spec.botNato}→${spec.channelId} ` +
+        `${from.status} → ${to.status}`,
+      );
+    });
+    connection.subscribe(outboundPlayer);
+
+    return leg;
   }
 
   private wireLegAudio(hail: Hail, source: HailLeg, sink: HailLeg): void {
@@ -389,21 +490,57 @@ export class HailManager {
       end: { behavior: EndBehaviorType.AfterSilence, duration: this.cfg.silenceCloseMs },
     });
     stream.on('error', (err) => {
-      if (isDaveError(err)) return;
+      if (isDaveError(err)) { source.daveDrops += 1; return; }
       console.error(`hail ${hail.hailId}: receive stream error on ${source.channelId}: ${err.message}`);
+    });
+    stream.on('end', () => {
+      console.log(`hail-diag: hail ${hail.hailId} receive stream END on ${source.channelId} [${source.botNato}]`);
+    });
+    stream.on('close', () => {
+      console.log(`hail-diag: hail ${hail.hailId} receive stream CLOSE on ${source.channelId} [${source.botNato}]`);
     });
     source.receiveStream = stream;
 
     const resource = createAudioResource(stream, { inputType: StreamType.Opus });
+    source.receiveResource = resource;
     sink.outboundPlayer.play(resource);
 
     // Any speech by the source owner re-arms the silence timer.
     // `speaking.on('start', userId)` fires on the connection's receiver.
     source.connection.receiver.speaking.on('start', (userId) => {
       if (userId !== source.ownerUserId) return;
+      source.speakingStarts += 1;
       if (hail.closing || hail.closed) return;
       this.armSilence(hail);
     });
+  }
+
+  /** 5-second heartbeat — one line per active hail with per-leg counters. */
+  private startHeartbeat(hail: Hail): void {
+    if (hail.heartbeatTimer !== null) clearInterval(hail.heartbeatTimer);
+    hail.heartbeatTimer = setInterval(() => {
+      if (hail.closed) return;
+      const uptime = Math.round((Date.now() - hail.openedAt) / 1000);
+      for (const leg of hail.legs) {
+        const inbound = leg.receiveResource?.playbackDuration ?? 0;
+        const inboundS = (inbound / 1000).toFixed(1);
+        console.log(
+          `hail-hb: h${hail.hailId} +${uptime}s ${leg.role}[${leg.botNato}]→${leg.channelId} ` +
+          `conn=${leg.connection.state.status} ` +
+          `player=${leg.outboundPlayer.state.status} ` +
+          `inboundS=${inboundS} ` +
+          `speakingStarts=${leg.speakingStarts} ` +
+          `daveDrops=${leg.daveDrops}`,
+        );
+      }
+    }, 5000);
+  }
+
+  private stopHeartbeat(hail: Hail): void {
+    if (hail.heartbeatTimer !== null) {
+      clearInterval(hail.heartbeatTimer);
+      hail.heartbeatTimer = null;
+    }
   }
 
   private armSilence(hail: Hail): void {
@@ -415,11 +552,128 @@ export class HailManager {
     }, this.cfg.silenceCloseMs);
   }
 
+  /**
+   * Locked-target ring loop. Plays `ring` in the target's outbound
+   * player every `ringIntervalMs`, and posts an Accept/Decline button
+   * pair through the controller. Resolves on:
+   *   • Accept click  → 'accepted'
+   *   • Decline click → 'declined'
+   *   • `ringMaxMs` elapsed with no click → 'timeout'
+   *   • Cancelled from _close via `hail.ringResolver('timeout')`
+   *
+   * Owner-only enforcement of the Accept/Decline buttons happens in
+   * `handleAcceptDecline`, not here.
+   */
+  private async ringForAccept(hail: Hail, targetLeg: HailLeg): Promise<RingDecision> {
+    const controller = this.cfg.fleet.controllerClient();
+    hail.ringMessage = await postRingButtons(controller, targetLeg.channelId, hail.hailId)
+      .catch((err) => {
+        console.error(`hail ${hail.hailId}: ring buttons post failed: ${errMsg(err)}`);
+        return null;
+      });
+
+    return await new Promise<RingDecision>((resolve) => {
+      let ringTimer: NodeJS.Timeout | null = null;
+      let maxTimer: NodeJS.Timeout | null = null;
+      let done = false;
+
+      const finish = (result: RingDecision): void => {
+        if (done) return;
+        done = true;
+        if (ringTimer !== null) clearTimeout(ringTimer);
+        if (maxTimer !== null) clearTimeout(maxTimer);
+        hail.ringResolver = null;
+        resolve(result);
+      };
+      hail.ringResolver = finish;
+
+      const playRing = (): void => {
+        if (done || hail.closing || hail.closed) return;
+        try {
+          targetLeg.outboundPlayer.play(createCueResource(this.cfg.cues.get('ring')));
+        } catch (err) {
+          console.error(`hail ${hail.hailId}: ring cue play failed: ${errMsg(err)}`);
+        }
+        ringTimer = setTimeout(playRing, this.cfg.ringIntervalMs);
+      };
+      playRing();
+
+      maxTimer = setTimeout(() => finish('timeout'), this.cfg.ringMaxMs);
+    });
+  }
+
+  /**
+   * Wind-down for a hail that was refused (declined or timed out).
+   * Plays `busy` in the initiator's channel — no `end` on the target
+   * because the hail never fully opened — disconnects both bots, and
+   * writes the close row with reason 'all_declined'.
+   */
+  private async refuseHail(
+    hail: Hail, initiatorLeg: HailLeg, _targetLeg: HailLeg,
+  ): Promise<void> {
+    hail.closing = true;
+    this.stopHeartbeat(hail);
+
+    // Delete ring buttons before Busy plays so the target does not see
+    // stale controls while the initiator hears the refuse cue.
+    if (hail.ringMessage !== null) {
+      await hail.ringMessage.delete().catch(() => {});
+      hail.ringMessage = null;
+    }
+
+    try {
+      initiatorLeg.outboundPlayer.play(createCueResource(this.cfg.cues.get('busy')));
+    } catch (err) {
+      console.error(`hail ${hail.hailId}: busy cue play failed: ${errMsg(err)}`);
+    }
+    await sleep(this.cfg.cues.expectedDurationMs);
+
+    for (const leg of hail.legs) {
+      try { leg.outboundPlayer.stop(true); } catch { /* ok */ }
+      try { leg.connection.destroy(); } catch { /* ok */ }
+    }
+
+    const now = Date.now();
+    this.cfg.db.prepare(
+      `UPDATE active_hails SET closed_at = ?, close_reason = ? WHERE id = ?`,
+    ).run(now, 'all_declined', hail.hailId);
+    for (const leg of hail.legs) this.busyNatos.delete(leg.botNato);
+    logHailEvent(this.cfg.db, hail.hailId, 'ended_all', null, null, 'all_declined');
+
+    hail.closed = true;
+    this.hails.delete(hail.hailId);
+  }
+
   private async _close(hail: Hail, reason: HailCloseReason): Promise<void> {
     if (hail.closing || hail.closed) return;
     hail.closing = true;
+    this.stopHeartbeat(hail);
+    const uptime = Math.round((Date.now() - hail.openedAt) / 1000);
+    for (const leg of hail.legs) {
+      const inbound = leg.receiveResource?.playbackDuration ?? 0;
+      console.log(
+        `hail-diag: h${hail.hailId} close reason=${reason} +${uptime}s ` +
+        `${leg.role}[${leg.botNato}]→${leg.channelId} ` +
+        `inboundMs=${inbound} ` +
+        `speakingStarts=${leg.speakingStarts} ` +
+        `daveDrops=${leg.daveDrops}`,
+      );
+    }
     if (hail.silenceTimer !== null) { clearTimeout(hail.silenceTimer); hail.silenceTimer = null; }
     if (hail.maxHoldTimer !== null) { clearTimeout(hail.maxHoldTimer); hail.maxHoldTimer = null; }
+    // If a ring is still in flight (initiator left before the target
+    // resolved), collapse it as 'timeout' so open() unblocks and the
+    // refuseHail path takes over. The DB row will already have been
+    // marked closed by the caller of _close, but the ring buttons must
+    // be removed either way.
+    if (hail.ringResolver !== null) {
+      hail.ringResolver('timeout');
+      hail.ringResolver = null;
+    }
+    if (hail.ringMessage !== null) {
+      await hail.ringMessage.delete().catch(() => {});
+      hail.ringMessage = null;
+    }
 
     // Tear down inbound audio first so cues do not fight remote audio.
     for (const leg of hail.legs) {
@@ -482,6 +736,35 @@ async function postEndButton(
     .setStyle(ButtonStyle.Danger);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
   return voice.send({ content: '🛰️ **Hail active.**', components: [row] });
+}
+
+async function postRingButtons(
+  controller: Client, channelId: string, hailId: number,
+): Promise<Message | null> {
+  const channel = await controller.channels.fetch(channelId).catch(() => null);
+  if (channel === null) return null;
+  if (channel.type !== ChannelType.GuildVoice) return null;
+  const voice = channel as VoiceBasedChannel;
+  const accept = new ButtonBuilder()
+    .setCustomId(`${HAIL_ACCEPT_PREFIX}${hailId}`)
+    .setLabel('Accept')
+    .setStyle(ButtonStyle.Success);
+  const decline = new ButtonBuilder()
+    .setCustomId(`${HAIL_DECLINE_PREFIX}${hailId}`)
+    .setLabel('Decline')
+    .setStyle(ButtonStyle.Danger);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(accept, decline);
+  return voice.send({
+    content: '🛰️ **Incoming hail.** Only the vessel owner can respond.',
+    components: [row],
+  });
+}
+
+function isChannelLocked(db: DB, channelId: string): boolean {
+  const row = db.prepare(
+    `SELECT locked FROM vessels WHERE channel_id = ? AND deleted_at IS NULL`,
+  ).get(channelId) as { locked: number } | undefined;
+  return row?.locked === 1;
 }
 
 function logHailEvent(

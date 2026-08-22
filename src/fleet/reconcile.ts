@@ -43,6 +43,7 @@ export interface ReconcileResult {
 export async function reconcile(
   db: DB,
   probe: (channelId: string) => Promise<ProbeStatus>,
+  log: (msg: string) => void = () => {},
 ): Promise<ReconcileResult> {
   const rows = db.prepare(`
     SELECT channel_id FROM vessels WHERE deleted_at IS NULL
@@ -54,24 +55,28 @@ export async function reconcile(
     let status: ProbeStatus;
     try {
       status = await probe(row.channel_id);
-    } catch {
+    } catch (err) {
+      log(`reconcile: probe threw for ${row.channel_id}: ${errMsg(err)} — leaving row alone`);
       continue;
     }
     if (status.kind === 'missing') {
+      log(`reconcile: ${row.channel_id} missing on Discord — dropping row`);
       reconcileChannelGone(db, row.channel_id);
       missing += 1;
       continue;
     }
-    if (status.kind === 'empty') {
-      try {
-        await status.delete();
-        reconcileChannelGone(db, row.channel_id);
-        deletedEmpty += 1;
-      } catch {
-        // Delete failed (perm change, etc). Leave the row alone; the
-        // vessel service's live listeners will pick it up if the state
-        // changes later.
-      }
+    if (status.kind === 'occupied') {
+      log(`reconcile: ${row.channel_id} occupied — keeping`);
+      continue;
+    }
+    // empty
+    try {
+      await status.delete();
+      reconcileChannelGone(db, row.channel_id);
+      log(`reconcile: ${row.channel_id} empty — deleted`);
+      deletedEmpty += 1;
+    } catch (err) {
+      log(`reconcile: ${row.channel_id} empty but delete FAILED: ${errMsg(err)} — leaving row alone`);
     }
   }
 
@@ -82,6 +87,10 @@ export async function reconcile(
   };
 }
 
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Wire `reconcile` to a live controller Client. Missing → Unknown
  * Channel (10003); Empty → voice channel with no non-bot members;
@@ -89,29 +98,53 @@ export async function reconcile(
  */
 export async function runReconciliation(db: DB, controller: Client): Promise<ReconcileResult> {
   return reconcile(db, async (channelId) => {
-    let channel: GuildBasedChannel | null;
+    // GUILD_CREATE hydrates `guild.channels.cache` and
+    // `guild.voiceStates.cache` for every channel the bot has View
+    // on. Prefer that over a REST fetch — a REST fetch on a channel
+    // whose member-overwrite View grant was silently dropped by
+    // Discord (category-level @everyone deny bypasses the child's
+    // member allow in some setups) returns 50001, and the row would
+    // then be treated as unknown even though we have full local
+    // information about it.
+    const row = db.prepare(
+      `SELECT guild_id FROM vessels WHERE channel_id = ? AND deleted_at IS NULL`,
+    ).get(channelId) as { guild_id: string } | undefined;
+    if (row !== undefined) {
+      const guild = controller.guilds.cache.get(row.guild_id);
+      if (guild !== undefined) {
+        const cached = guild.channels.cache.get(channelId);
+        if (cached !== undefined) {
+          return probeFromCached(cached as GuildBasedChannel);
+        }
+      }
+    }
+
+    // Not in the guild cache — REST fetch as a fallback. Missing
+    // Access here means the channel exists but the controller cannot
+    // see it: report unknown (probe throws), which the caller logs
+    // and leaves the row alone.
+    let fetched: GuildBasedChannel | null;
     try {
-      channel = (await controller.channels.fetch(channelId)) as GuildBasedChannel | null;
+      fetched = (await controller.channels.fetch(channelId)) as GuildBasedChannel | null;
     } catch (err) {
       if (isUnknownChannelError(err)) return { kind: 'missing' };
       throw err;
     }
-    if (channel === null) return { kind: 'missing' };
-    if (channel.type !== ChannelType.GuildVoice) {
-      // A non-voice channel with this id means either a schema drift
-      // or a channel replaced by hand. Treat as occupied — do not
-      // touch it.
-      return { kind: 'occupied' };
-    }
-    const humans = channel.members.filter((m) => !m.user.bot).size;
-    if (humans > 0) return { kind: 'occupied' };
-    return {
-      kind: 'empty',
-      delete: async () => {
-        await channel!.delete('Star Comms: boot cleanup of empty vessel');
-      },
-    };
-  });
+    if (fetched === null) return { kind: 'missing' };
+    return probeFromCached(fetched);
+  }, (msg) => console.log(msg));
+}
+
+function probeFromCached(channel: GuildBasedChannel): ProbeStatus {
+  if (channel.type !== ChannelType.GuildVoice) return { kind: 'occupied' };
+  const humans = channel.members.filter((m) => !m.user.bot).size;
+  if (humans > 0) return { kind: 'occupied' };
+  return {
+    kind: 'empty',
+    delete: async () => {
+      await channel.delete('Star Comms: boot cleanup of empty vessel');
+    },
+  };
 }
 
 function isUnknownChannelError(err: unknown): boolean {

@@ -30,7 +30,9 @@ import {
   makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
 } from './commands/callsigns.js';
 import { makePanelDispatcher } from './commands/panel-handlers.js';
-import { HAIL_END_PREFIX, HailManager } from './session/hail.js';
+import {
+  HAIL_ACCEPT_PREFIX, HAIL_DECLINE_PREFIX, HAIL_END_PREFIX, HailManager,
+} from './session/hail.js';
 import { startVesselService } from './session/vessel.js';
 
 async function main(): Promise<void> {
@@ -75,17 +77,24 @@ async function main(): Promise<void> {
 
   // Post-login reconciliation: with the controller connected we can now
   // ask Discord which of the tracked vessels still exist and drop rows
-  // for those that don't.
-  try {
-    const result = await runReconciliation(db, fleet.controllerClient());
-    console.log(
-      `reconcile: checked ${result.vesselsChecked} vessel(s), ` +
-      `dropped ${result.vesselsMissing} gone, ` +
-      `deleted ${result.vesselsDeletedEmpty} orphan empty`,
-    );
-  } catch (err) {
-    console.warn(`reconcile: failed — ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // for those that don't. Runs once at boot and then every 5 minutes
+  // as a safety net — if a live voiceStateUpdate is missed (bot
+  // disconnected briefly, event lost, race with a crash), the periodic
+  // pass eventually catches the orphan.
+  const reconcileOnce = async (): Promise<void> => {
+    try {
+      const result = await runReconciliation(db, fleet.controllerClient());
+      console.log(
+        `reconcile: checked ${result.vesselsChecked} vessel(s), ` +
+        `dropped ${result.vesselsMissing} gone, ` +
+        `deleted ${result.vesselsDeletedEmpty} orphan empty`,
+      );
+    } catch (err) {
+      console.warn(`reconcile: failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  await reconcileOnce();
+  const reconcileInterval = setInterval(() => { void reconcileOnce(); }, 5 * 60_000);
 
   const handlers: Record<string, SubcommandHandler> = {
     init: makeInitHandler(config, db),
@@ -112,6 +121,8 @@ async function main(): Promise<void> {
         db, fleet, cues,
         silenceCloseMs: config.defaults.hailSilenceCloseMs,
         maxHoldMs: config.defaults.hailMaxHoldMs,
+        ringIntervalMs: config.defaults.ringIntervalMs,
+        ringMaxMs: config.defaults.ringMaxMs,
       })
     : null;
   if (hails === null) {
@@ -142,6 +153,31 @@ async function main(): Promise<void> {
       }
       return;
     }
+    if ((id.startsWith(HAIL_ACCEPT_PREFIX) || id.startsWith(HAIL_DECLINE_PREFIX))
+        && interaction.isButton()) {
+      if (hails === null) return;
+      const accept = id.startsWith(HAIL_ACCEPT_PREFIX);
+      const prefix = accept ? HAIL_ACCEPT_PREFIX : HAIL_DECLINE_PREFIX;
+      const hailId = Number(id.slice(prefix.length));
+      if (!Number.isFinite(hailId)) return;
+      const status = hails.handleAcceptDecline(
+        hailId, accept ? 'accepted' : 'declined', interaction.user.id,
+      );
+      if (status === 'not_owner') {
+        void interaction.reply({
+          content: 'Only the vessel owner can respond to this hail.',
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+      } else if (status === 'not_ringing') {
+        void interaction.reply({
+          content: 'This hail is no longer waiting for a response.',
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+      } else {
+        void interaction.deferUpdate().catch(() => {});
+      }
+      return;
+    }
   });
 
   const vessels = startVesselService({ fleet, db, hails });
@@ -153,6 +189,7 @@ async function main(): Promise<void> {
     if (exiting) return;
     exiting = true;
     console.log(`\n${signal} — shutting down`);
+    clearInterval(reconcileInterval);
     server.close();
     vessels.stop();
     if (hails !== null) await hails.drain();

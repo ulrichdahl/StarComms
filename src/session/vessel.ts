@@ -55,7 +55,19 @@ export interface VesselService {
 
 export function startVesselService(cfg: VesselServiceConfig): VesselService {
   const controller = cfg.fleet.controllerClient();
+  // 30 s pending actions per channel. `Cleanups` = empty channel → delete.
+  // `Transfers` = owner absent + others remain → transfer ownership. Only
+  // one applies to any channel at a time; the leave handler cancels either
+  // and schedules whichever now matches the current channel state.
   const pendingCleanups = new Map<string, NodeJS.Timeout>();
+  const pendingTransfers = new Map<string, NodeJS.Timeout>();
+
+  const cancelAll = (channelId: string): void => {
+    const c = pendingCleanups.get(channelId);
+    if (c !== undefined) { clearTimeout(c); pendingCleanups.delete(channelId); }
+    const t = pendingTransfers.get(channelId);
+    if (t !== undefined) { clearTimeout(t); pendingTransfers.delete(channelId); }
+  };
 
   const onVoiceStateUpdate = (oldState: VoiceState, newState: VoiceState): void => {
     // We only care when the channel actually changed. A mute/deafen flip is
@@ -63,12 +75,12 @@ export function startVesselService(cfg: VesselServiceConfig): VesselService {
     if (oldState.channelId === newState.channelId) return;
 
     if (oldState.channelId !== null) {
-      void onChannelLeave(cfg, oldState, pendingCleanups).catch((err) => {
+      void onChannelLeave(cfg, oldState, pendingCleanups, pendingTransfers).catch((err) => {
         console.error(`vessel: onLeave failed: ${errMsg(err)}`);
       });
     }
     if (newState.channelId !== null) {
-      void onChannelJoin(cfg, newState, pendingCleanups).catch((err) => {
+      void onChannelJoin(cfg, newState, pendingCleanups, pendingTransfers).catch((err) => {
         console.error(`vessel: onJoin failed: ${errMsg(err)}`);
       });
     }
@@ -78,12 +90,7 @@ export function startVesselService(cfg: VesselServiceConfig): VesselService {
     if (channel.type !== ChannelType.GuildVoice) return;
     // Idempotent: the row may already be marked deleted by our own delete path.
     reconcileChannelGone(cfg.db, channel.id);
-    // Any pending 30 s cleanup for this channel is now moot.
-    const timer = pendingCleanups.get(channel.id);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      pendingCleanups.delete(channel.id);
-    }
+    cancelAll(channel.id);
   };
 
   controller.on(Events.VoiceStateUpdate, onVoiceStateUpdate);
@@ -95,7 +102,9 @@ export function startVesselService(cfg: VesselServiceConfig): VesselService {
       controller.off(Events.VoiceStateUpdate, onVoiceStateUpdate);
       controller.off(Events.ChannelDelete, onChannelDelete);
       for (const timer of pendingCleanups.values()) clearTimeout(timer);
+      for (const timer of pendingTransfers.values()) clearTimeout(timer);
       pendingCleanups.clear();
+      pendingTransfers.clear();
     },
   };
 }
@@ -116,17 +125,30 @@ async function onChannelJoin(
   cfg: VesselServiceConfig,
   state: VoiceState,
   pendingCleanups: Map<string, NodeJS.Timeout>,
+  pendingTransfers: Map<string, NodeJS.Timeout>,
 ): Promise<void> {
   const guild = state.guild;
   const channelId = state.channelId;
   if (channelId === null) return;
 
-  // If joining a vessel we already know about, cancel any pending cleanup —
-  // a rejoin should keep the channel alive.
+  // Any rejoin (owner or otherwise) cancels the empty-cleanup timer for
+  // this channel — the room is inhabited again. An owner-rejoin also
+  // cancels the pending ownership-transfer.
   const cleanup = pendingCleanups.get(channelId);
   if (cleanup !== undefined) {
     clearTimeout(cleanup);
     pendingCleanups.delete(channelId);
+  }
+  const vessel = cfg.db.prepare(`
+    SELECT owner_user_id FROM vessels WHERE channel_id = ? AND deleted_at IS NULL
+  `).get(channelId) as { owner_user_id: string } | undefined;
+  if (vessel !== undefined && vessel.owner_user_id === state.id) {
+    const transfer = pendingTransfers.get(channelId);
+    if (transfer !== undefined) {
+      clearTimeout(transfer);
+      pendingTransfers.delete(channelId);
+      console.log(`vessel: owner ${state.id} returned to ${channelId} within grace window — transfer cancelled`);
+    }
   }
 
   const joinToCreate = getJoinToCreateChannel(cfg.db, guild.id);
@@ -160,6 +182,14 @@ async function createVesselFor(
   const controllerUserId = cfg.fleet.controllerClient().user?.id;
   const overwrites: OverwriteResolvable[] = [];
   if (controllerUserId !== undefined) {
+    // Keep the create-time overwrite minimal: just ViewChannel +
+    // ManageChannels + the message perms. Connect is added
+    // post-create so a failed grant doesn't abort the vessel.
+    // ManageRoles is skipped here — the controller uses its
+    // guild-level ManageRoles to edit overwrites; a channel-level
+    // grant added at create-time appears to trigger 50013 in some
+    // category configurations even when the controller effectively
+    // has ManageRoles on the parent.
     overwrites.push({
       id: controllerUserId,
       type: OverwriteType.Member,
@@ -172,6 +202,13 @@ async function createVesselFor(
       ],
     });
   }
+
+  // Relays are handled post-create (see below): setting a member
+  // overwrite for a foreign bot in the create body can 50013 if
+  // Discord's server rejects any single item; splitting the relay
+  // grants into individual `permissionOverwrites.create` calls after
+  // create lets the create itself succeed even if a later overwrite
+  // errors, and each per-relay error is diagnosable in isolation.
   overwrites.push({
     id: member.id,
     type: OverwriteType.Member,
@@ -253,6 +290,43 @@ async function createVesselFor(
   `).run(guild.id, channel.id, member.id, Date.now());
   console.log(`vessel: created ${channel.name} (${channel.id}) for ${member.user.tag}`);
 
+  // Post-create fleet grants:
+  //   • Controller gets Connect added on top of its create-time overwrite
+  //     so a subsequent Lock (`@everyone deny Connect`) doesn't lock the
+  //     controller out of edits on its own vessel.
+  //   • Each relay gets View+Connect+Speak so hails into locked
+  //     channels still work (§6).
+  // Split from the create body because setting these inline can 50013
+  // in some category configurations; done one at a time so a single
+  // per-relay failure is diagnosable in isolation.
+  if (controllerUserId !== undefined) {
+    await channel.permissionOverwrites.edit(controllerUserId, {
+      Connect: true,
+    }, {
+      type: OverwriteType.Member,
+      reason: 'Star Comms: controller Connect for lock-immunity',
+    }).catch((err) => {
+      console.warn(`vessel: controller Connect overwrite failed on ${channel.id}: ${errMsg(err)}`);
+    });
+  }
+  for (const relayId of cfg.fleet.botUserIds()) {
+    if (relayId === controllerUserId) continue;
+    // Explicit `type: OverwriteType.Member` skips discord.js's
+    // member/role lookup — the relay bot users aren't in the
+    // controller Client's guild-members cache and the lookup would
+    // otherwise 400 with "Supplied parameter is not a User nor a Role".
+    await channel.permissionOverwrites.create(relayId, {
+      ViewChannel: true,
+      Connect: true,
+      Speak: true,
+    }, {
+      type: OverwriteType.Member,
+      reason: 'Star Comms: relay access for hails',
+    }).catch((err) => {
+      console.warn(`vessel: relay overwrite for ${relayId} failed on ${channel.id}: ${errMsg(err)}`);
+    });
+  }
+
   const moved = await moveOwnerIn(guild, member, channel).catch((err) => {
     console.error(`vessel: MOVE_MEMBERS failed for ${member.user.tag}: ${errMsg(err)}`);
     return false;
@@ -287,6 +361,7 @@ async function onChannelLeave(
   cfg: VesselServiceConfig,
   state: VoiceState,
   pendingCleanups: Map<string, NodeJS.Timeout>,
+  pendingTransfers: Map<string, NodeJS.Timeout>,
 ): Promise<void> {
   const channelId = state.channelId;
   if (channelId === null) return;
@@ -314,25 +389,66 @@ async function onChannelLeave(
   const remainingHumans = channel.members.filter((m) => !m.user.bot);
 
   if (remainingHumans.size === 0) {
-    // Nobody left. Schedule the 30 s cleanup; hail_registry drop moves
-    // with the delete so a rejoin within the grace window keeps the
-    // vessel + directory state intact.
+    // Nobody left. Empty-cleanup path takes precedence: cancel any
+    // pending transfer (others just left too), schedule the 30 s delete.
+    const t = pendingTransfers.get(channelId);
+    if (t !== undefined) { clearTimeout(t); pendingTransfers.delete(channelId); }
     scheduleCleanup(cfg, channel.client, channelId, pendingCleanups);
     return;
   }
 
-  // Others remain. Owner absent → transfer ownership to a remaining
-  // member and turn hails off. The founder's callsign was their
-  // identity, not the room's; the group keeps the room but not the
-  // hail directory presence.
+  // Others remain. Owner absent → schedule a 30 s ownership transfer,
+  // matching the empty-cleanup grace window. A rejoin within that
+  // window cancels the transfer (see onChannelJoin). Only the founder
+  // triggers a transfer schedule; a non-owner leaving with the owner
+  // still around is a no-op.
   if (ownerLeft) {
-    const successor = remainingHumans.first();
-    if (successor !== undefined) {
-      await transferOwnership(cfg, channel, vessel.owner_user_id, successor).catch((err) => {
-        console.error(`vessel: ownership transfer failed on ${channelId}: ${errMsg(err)}`);
-      });
-    }
+    scheduleTransfer(cfg, channelId, pendingTransfers);
   }
+}
+
+function scheduleTransfer(
+  cfg: VesselServiceConfig,
+  channelId: string,
+  pendingTransfers: Map<string, NodeJS.Timeout>,
+): void {
+  const existing = pendingTransfers.get(channelId);
+  if (existing !== undefined) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    pendingTransfers.delete(channelId);
+    void transferIfOwnerStillAbsent(cfg, channelId).catch((err) => {
+      console.error(`vessel: transfer check failed for ${channelId}: ${errMsg(err)}`);
+    });
+  }, CLEANUP_DELAY_MS);
+  pendingTransfers.set(channelId, timer);
+}
+
+async function transferIfOwnerStillAbsent(
+  cfg: VesselServiceConfig,
+  channelId: string,
+): Promise<void> {
+  const vessel = cfg.db.prepare(`
+    SELECT id, guild_id, channel_id, owner_user_id
+    FROM vessels
+    WHERE channel_id = ? AND deleted_at IS NULL
+  `).get(channelId) as VesselRow | undefined;
+  if (vessel === undefined) return;
+
+  const controller = cfg.fleet.controllerClient();
+  const channel = await controller.channels.fetch(channelId).catch(() => null);
+  if (channel === null || channel.type !== ChannelType.GuildVoice) return;
+
+  const humans = channel.members.filter((m) => !m.user.bot);
+  if (humans.size === 0) return; // empty-cleanup path will handle it
+  if (humans.has(vessel.owner_user_id)) {
+    // Owner came back inside the window; nothing to do.
+    return;
+  }
+  const successor = humans.first();
+  if (successor === undefined) return;
+  await transferOwnership(cfg, channel, vessel.owner_user_id, successor).catch((err) => {
+    console.error(`vessel: ownership transfer failed on ${channelId}: ${errMsg(err)}`);
+  });
 }
 
 async function transferOwnership(
@@ -402,9 +518,15 @@ async function cleanupIfStillEmpty(
     console.error(`vessel: cannot delete ${channelId} — controller lacks ManageChannels`);
     return;
   }
-  await channel.delete('Star Comms: vessel empty').catch((err) => {
-    console.error(`vessel: delete ${channelId} failed: ${errMsg(err)}`);
-  });
+  try {
+    await channel.delete('Star Comms: vessel empty');
+  } catch (err) {
+    console.error(
+      `vessel: delete ${channelId} failed: ${errMsg(err)} — DB row kept ` +
+      `for the periodic reconcile pass to retry.`,
+    );
+    return;
+  }
   cfg.db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channelId);
   markDeleted(cfg.db, channelId);
   console.log(`vessel: deleted empty ${channelId}`);
