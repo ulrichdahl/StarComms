@@ -3,28 +3,29 @@
  *
  * Cues are pre-decoded to raw Opus frames at startup and cached in memory,
  * so playback allocates only the enclosing stream — no disk read, no
- * transcode. Every cue in the active set must be exactly the same length as
- * `cue_duration_ms` within a small tolerance. The spec calls this out
- * because the caller's `Ready` and the receivers' `Attention` are started
- * on the same instant; unequal assets clip the first word of every
- * transmission (§5). Startup fails loud on a mismatch — a soft warning
- * would let a broken pair through undetected.
+ * transcode. Cues play in full — the strict-equal-duration invariant that
+ * used to govern Ready + Attention was retired when the hail flow moved
+ * to `entersState(player, Idle)` for cue-end sync; length now varies per
+ * asset and per locale.
  *
  * Playback is object-mode: the loaded packets are re-emitted one per data
  * event via `StreamType.Opus`. That matches the `receiver.subscribe` shape
- * used by the blind relay, so the same audio-out path handles both.
+ * used by the mixer path, so the same audio-out plumbing handles both.
  */
 
 import { createReadStream, existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import prism from 'prism-media';
 import {
   createAudioResource, StreamType, type AudioResource,
 } from '@discordjs/voice';
 
-export const CUE_NAMES = ['ready', 'attention', 'ring', 'busy', 'end'] as const;
+export const CUE_NAMES = [
+  'ready', 'attention', 'ring', 'busy', 'end',
+  'established', 'disconnected',
+] as const;
 export type Cue = typeof CUE_NAMES[number];
 
 /** Per-frame duration in ms at 48 kHz with frameSize 960. */
@@ -39,31 +40,16 @@ export interface LoadedCue {
 
 export type CuePaths = Record<Cue, string>;
 
-/**
- * `ready` and `attention` are the strict pair — they play concurrently
- * across the caller and each accepted target on the same instant and
- * their common end defines when the caller can start speaking, so any
- * length drift clips the first word. `ring`, `busy` and `end` play
- * alone and get a wider tolerance; we still validate them so operator-
- * supplied packs stay coherent, but a small drift will not refuse boot.
- */
-const STRICT_CUES = new Set<Cue>(['ready', 'attention']);
-const STRICT_TOLERANCE_MS = 40;   // 2 opus frames
-const LOOSE_TOLERANCE_MS = 200;
-
 export class CueLoadError extends Error {
   constructor(message: string) { super(`cues: ${message}`); this.name = 'CueLoadError'; }
 }
 
 /**
- * Load and validate every cue named in `paths`. Missing files, wrong
- * format, or a duration outside tolerance all raise CueLoadError before
- * the fleet touches Discord.
+ * Load every cue named in `paths`. Missing files or a decoder failure raise
+ * CueLoadError before the fleet touches Discord. Duration is recorded per
+ * cue but not validated against a target — cues play to completion.
  */
-export async function loadCueSet(
-  paths: CuePaths,
-  expectedDurationMs: number,
-): Promise<CueSet> {
+export async function loadCueSet(paths: CuePaths): Promise<CueSet> {
   const loaded = new Map<Cue, LoadedCue>();
   for (const name of CUE_NAMES) {
     const p = paths[name];
@@ -77,18 +63,9 @@ export async function loadCueSet(
     }
     const packets = await encodeToOpus(p);
     const durationMs = packets.length * FRAME_MS;
-    const tolerance = STRICT_CUES.has(name) ? STRICT_TOLERANCE_MS : LOOSE_TOLERANCE_MS;
-    if (Math.abs(durationMs - expectedDurationMs) > tolerance) {
-      throw new CueLoadError(
-        `${name} (${basename(p)}) is ${durationMs} ms, expected ${expectedDurationMs} ± ${tolerance} ms. ` +
-        (STRICT_CUES.has(name)
-          ? 'ready and attention must match exactly or their concurrent playback drifts and the first word clips.'
-          : 'this cue plays alone, but is still validated to catch operator mistakes.'),
-      );
-    }
     loaded.set(name, { name, path: p, packets, durationMs });
   }
-  return new CueSet(loaded, expectedDurationMs);
+  return new CueSet(loaded);
 }
 
 /**
@@ -128,10 +105,7 @@ function encodeToOpus(path: string): Promise<Buffer[]> {
 }
 
 export class CueSet {
-  constructor(
-    private readonly cues: Map<Cue, LoadedCue>,
-    public readonly expectedDurationMs: number,
-  ) {}
+  constructor(private readonly cues: Map<Cue, LoadedCue>) {}
 
   /** Cached opus packets for the named cue. Throws if never loaded. */
   get(name: Cue): LoadedCue {
@@ -199,7 +173,9 @@ export function resolveCuePaths(
   };
 
   const paths: Partial<CuePaths> = {};
-  const localizedNames: readonly Cue[] = ['ready', 'attention', 'busy'];
+  const localizedNames: readonly Cue[] = [
+    'ready', 'attention', 'busy', 'established', 'disconnected',
+  ];
   const sharedNames: readonly Cue[] = ['ring', 'end'];
 
   for (const n of localizedNames) {

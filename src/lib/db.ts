@@ -72,14 +72,15 @@ CREATE TABLE IF NOT EXISTS callsigns (
 
 -- vessels — voice channels created via join-to-create
 CREATE TABLE IF NOT EXISTS vessels (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  guild_id       TEXT NOT NULL,
-  channel_id     TEXT NOT NULL UNIQUE,
-  owner_user_id  TEXT NOT NULL,
-  created_at     INTEGER NOT NULL,
-  deleted_at     INTEGER,
-  locked         INTEGER NOT NULL DEFAULT 0,
-  user_limit     INTEGER NOT NULL DEFAULT 0
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id          TEXT NOT NULL,
+  channel_id        TEXT NOT NULL UNIQUE,
+  owner_user_id     TEXT NOT NULL,
+  created_at        INTEGER NOT NULL,
+  deleted_at        INTEGER,
+  locked            INTEGER NOT NULL DEFAULT 0,
+  user_limit        INTEGER NOT NULL DEFAULT 0,
+  panel_message_id  TEXT
 );
 
 -- hail directory: vessels currently accepting incoming hails
@@ -158,7 +159,18 @@ export function openDb(path: string): DB {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  // Post-schema migrations for columns added after initial deploy.
+  // `CREATE TABLE IF NOT EXISTS` above does not touch an existing
+  // table's shape, so we ALTER TABLE ADD COLUMN for any missing
+  // additions.
+  addColumnIfMissing(db, 'vessels', 'panel_message_id', 'TEXT');
   return db;
+}
+
+function addColumnIfMissing(db: DB, table: string, column: string, columnDef: string): void {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (rows.some((r) => r.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${columnDef}`);
 }
 
 export type { DB };

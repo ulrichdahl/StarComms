@@ -342,9 +342,19 @@ async function createVesselFor(
     ? ''
     : '\n_Discord blocks the bot from moving you (most often because you are the guild owner). ' +
       'Join this channel manually to activate it._';
-  await channel.send({ content: `${panel.content}${notice}`, components: panel.components }).catch((err) => {
+  const posted = await channel.send({
+    content: `${panel.content}${notice}`, components: panel.components,
+  }).catch((err) => {
     console.error(`vessel: panel post failed: ${errMsg(err)}`);
+    return null;
   });
+  // Persist the panel message id so background paths (ownership
+  // transfer, others) can fetch + edit it without an interaction.
+  if (posted !== null) {
+    cfg.db.prepare(
+      `UPDATE vessels SET panel_message_id = ? WHERE channel_id = ?`,
+    ).run(posted.id, channel.id);
+  }
 }
 
 async function moveOwnerIn(
@@ -470,6 +480,29 @@ async function transferOwnership(
   await channel.setName(newName, 'Star Comms: ownership transfer').catch((err) => {
     console.warn(`vessel: rename on ownership transfer 429/failed: ${errMsg(err)}`);
   });
+
+  // Re-render the control panel so buttons + owner mention + hails
+  // state reflect the transfer. We do NOT have an interaction here to
+  // call `.update()` with, so fetch the persisted panel message by
+  // its id and edit in place.
+  const row = cfg.db.prepare(
+    `SELECT panel_message_id FROM vessels WHERE channel_id = ?`,
+  ).get(channel.id) as { panel_message_id: string | null } | undefined;
+  const messageId = row?.panel_message_id ?? null;
+  if (messageId !== null) {
+    const freshState = getVesselState(cfg.db, channel.id);
+    if (freshState !== null) {
+      const message = await channel.messages.fetch(messageId).catch(() => null);
+      if (message !== null) {
+        const rendered = buildPanel(freshState);
+        await message.edit({
+          content: rendered.content, components: rendered.components,
+        }).catch((err) => {
+          console.warn(`vessel: panel refresh on transfer failed: ${errMsg(err)}`);
+        });
+      }
+    }
+  }
 
   await channel.send({
     content: `⚓ <@${oldOwnerUserId}> left. Ownership passed to ${successor.toString()}. Hails disabled.`,

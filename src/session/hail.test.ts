@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../lib/db.js';
-import { pickTwo, SQUAD_NATOS } from './hail.js';
+import { pickN, pickTwo, SQUAD_NATOS } from './hail.js';
 
 describe('pickTwo', () => {
   const never = () => false;
@@ -35,6 +35,31 @@ describe('pickTwo', () => {
   it('honors input order — deterministic assignment for logs', () => {
     const custom = ['charlie', 'alfa', 'bravo'] as const;
     expect(pickTwo(custom, never, always)).toEqual(['charlie', 'alfa']);
+  });
+});
+
+describe('pickN', () => {
+  const never = () => false;
+  const always = () => true;
+
+  it('picks all three when count is 3 and none busy', () => {
+    expect(pickN(SQUAD_NATOS, 3, never, always)).toEqual(['alfa', 'bravo', 'charlie']);
+  });
+
+  it('picks the first N when count < available', () => {
+    expect(pickN(SQUAD_NATOS, 2, never, always)).toEqual(['alfa', 'bravo']);
+  });
+
+  it('returns null when fewer than count are free', () => {
+    const busy = new Set(['alfa', 'bravo']);
+    expect(pickN(SQUAD_NATOS, 2, (n) => busy.has(n), always)).toBeNull();
+  });
+
+  it('skips busy + unreachable', () => {
+    const busy = new Set(['alfa']);
+    const online = new Set(['alfa', 'bravo', 'charlie']);
+    expect(pickN(SQUAD_NATOS, 2, (n) => busy.has(n), (n) => online.has(n)))
+      .toEqual(['bravo', 'charlie']);
   });
 });
 

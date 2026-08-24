@@ -60,8 +60,8 @@ async function main(): Promise<void> {
   let cues: CueSet | null = null;
   try {
     const paths = resolveCuePaths(config.raw, config.defaults.cueSet, config.defaults.locale, configPath);
-    cues = await loadCueSet(paths, config.defaults.cueDurationMs);
-    console.log(`cues: loaded ${cues.summary().length} at ~${config.defaults.cueDurationMs} ms each`);
+    cues = await loadCueSet(paths);
+    console.log(`cues: loaded ${cues.summary().length} assets`);
     for (const c of cues.summary()) {
       console.log(`  ${c.name.padEnd(10)} ${String(c.durationMs).padStart(5)} ms  ${c.packets} packets  ${c.path}`);
     }
@@ -77,24 +77,38 @@ async function main(): Promise<void> {
 
   // Post-login reconciliation: with the controller connected we can now
   // ask Discord which of the tracked vessels still exist and drop rows
-  // for those that don't. Runs once at boot and then every 5 minutes
-  // as a safety net — if a live voiceStateUpdate is missed (bot
-  // disconnected briefly, event lost, race with a crash), the periodic
-  // pass eventually catches the orphan.
-  const reconcileOnce = async (): Promise<void> => {
+  // for those that don't. Runs:
+  //   • once immediately after fleet.start() (boot pass),
+  //   • every 5 minutes as a safety net,
+  //   • on ShardResume / ShardReady of the controller — a PC suspend/
+  //     wake, a network flap, or any missed voice-state event during
+  //     the disconnect can leave stale rows; a reconnect is the right
+  //     moment to reconcile against Discord's live state.
+  const reconcileOnce = async (reason: string): Promise<void> => {
     try {
       const result = await runReconciliation(db, fleet.controllerClient());
       console.log(
-        `reconcile: checked ${result.vesselsChecked} vessel(s), ` +
+        `reconcile[${reason}]: checked ${result.vesselsChecked} vessel(s), ` +
         `dropped ${result.vesselsMissing} gone, ` +
         `deleted ${result.vesselsDeletedEmpty} orphan empty`,
       );
     } catch (err) {
-      console.warn(`reconcile: failed — ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`reconcile[${reason}]: failed — ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-  await reconcileOnce();
-  const reconcileInterval = setInterval(() => { void reconcileOnce(); }, 5 * 60_000);
+  await reconcileOnce('boot');
+  const reconcileInterval = setInterval(() => { void reconcileOnce('periodic'); }, 5 * 60_000);
+
+  // Reconcile after a shard resume/reconnect. Delay by 3 s so
+  // discord.js has time to replay VOICE_STATE_UPDATE events (RESUME)
+  // or receive GUILD_CREATE with fresh voice_states (fresh IDENTIFY)
+  // and the cache reflects reality before we probe it.
+  const controllerClient = fleet.controllerClient();
+  const onControllerReconnected = (label: string): void => {
+    setTimeout(() => { void reconcileOnce(label); }, 3_000);
+  };
+  controllerClient.on(Events.ShardResume, () => onControllerReconnected('resume'));
+  controllerClient.on(Events.ShardReady, () => onControllerReconnected('shard-ready'));
 
   const handlers: Record<string, SubcommandHandler> = {
     init: makeInitHandler(config, db),

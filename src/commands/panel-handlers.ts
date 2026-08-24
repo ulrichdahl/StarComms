@@ -471,6 +471,9 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
     // Panel update via interaction.update — atomically re-renders.
     const rendered = buildPanel({ ...state, hailsEnabled: false });
     await interaction.update({ content: rendered.content, components: rendered.components });
+    // Fire-and-forget `disconnected` announcement in the vessel.
+    void deps.hails.playAnnouncement(state.guildId, state.channelId, 'disconnected')
+      .catch((err) => console.error(`panel: disconnected announcement failed: ${errMsg(err)}`));
     return;
   }
 
@@ -518,6 +521,11 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
   }
+
+  // Fire-and-forget `established` announcement — a relay drops in,
+  // says the line, leaves.
+  void deps.hails.playAnnouncement(state.guildId, state.channelId, 'established')
+    .catch((err) => console.error(`panel: established announcement failed: ${errMsg(err)}`));
 }
 
 // ---------------------------------------------------------------------------
@@ -558,18 +566,24 @@ async function handleHailClick(deps: PanelDeps, interaction: ButtonInteraction):
     return;
   }
 
+  // Multi-select up to (available bots - 1) targets — the initiator's
+  // own vessel also needs a relay, so we deduct one from what the
+  // hail manager reports free right now. Fall back to 1 if the pool
+  // is small; the manager will re-check at open time regardless.
+  const freeBots = deps.hails.freeBotCount(state.guildId);
+  const maxTargets = Math.max(1, freeBots - 1);
   const menu = new StringSelectMenuBuilder()
     .setCustomId(PANEL_IDS.hailPick)
-    .setPlaceholder('Pick a vessel to hail')
+    .setPlaceholder(maxTargets > 1 ? `Pick up to ${maxTargets} vessels to hail` : 'Pick a vessel to hail')
     .setMinValues(1)
-    .setMaxValues(1);
+    .setMaxValues(Math.min(maxTargets, directory.length));
   for (const row of directory) {
     menu.addOptions({ label: row.callsign, value: row.channel_id });
   }
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 
   await interaction.reply({
-    content: '🛰️ Pick a vessel to hail. Ready cue on your side, Attention cue on theirs.',
+    content: '🛰️ Pick vessels to hail. Ready cue on your side, Attention cue on theirs.',
     components: [row],
     flags: MessageFlags.Ephemeral,
   });
@@ -581,33 +595,38 @@ async function handleHailPick(
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
 
-  const targetChannelId = interaction.values[0];
-  if (targetChannelId === undefined) {
-    await interaction.update({ content: 'No target picked.', components: [] });
+  if (interaction.values.length === 0) {
+    await interaction.update({ content: 'No targets picked.', components: [] });
     return;
   }
 
-  // Resolve the target's current owner. hail_registry guarantees the
+  // Resolve every target's current owner. hail_registry guarantees the
   // vessel is registered; we still need the owner id to subscribe to
-  // that user's SSRC.
-  const targetVessel = deps.db.prepare(
-    `SELECT owner_user_id FROM vessels WHERE channel_id = ? AND deleted_at IS NULL`,
-  ).get(targetChannelId) as { owner_user_id: string } | undefined;
-  if (targetVessel === undefined) {
+  // that user's SSRC. Drop any target whose vessel disappeared.
+  const targets: Array<{ channelId: string; ownerUserId: string }> = [];
+  const dropped: string[] = [];
+  for (const channelId of interaction.values) {
+    const row = deps.db.prepare(
+      `SELECT owner_user_id FROM vessels WHERE channel_id = ? AND deleted_at IS NULL`,
+    ).get(channelId) as { owner_user_id: string } | undefined;
+    if (row === undefined) { dropped.push(channelId); continue; }
+    targets.push({ channelId, ownerUserId: row.owner_user_id });
+  }
+  if (targets.length === 0) {
     await interaction.update({
-      content: 'That vessel is no longer available.', components: [],
+      content: 'None of the picked vessels are still available.', components: [],
     });
     return;
   }
 
   await interaction.update({
-    content: '🛰️ Opening hail…', components: [],
+    content: `🛰️ Opening hail to ${targets.length} vessel(s)…`, components: [],
   });
 
   const result = await deps.hails.open({
     guildId: state.guildId,
     initiator: { channelId: state.channelId, ownerUserId: state.ownerUserId },
-    target: { channelId: targetChannelId, ownerUserId: targetVessel.owner_user_id },
+    targets,
   });
 
   const followUp = result.ok
@@ -621,17 +640,23 @@ async function handleHailPick(
 function renderHailError(reason: string): string {
   switch (reason) {
     case 'no_relays':
-      return 'All relay bots are currently in other hails. Try again in a minute.';
+      return 'Not enough relay bots are free right now. Try again in a minute.';
     case 'not_in_guild':
-      return 'Fewer than two relay bots are in this guild. Ask the guild owner to invite the missing relays before hails can open here.';
+      return 'Not enough relay bots are in this guild. Ask the guild owner to invite the missing relays.';
+    case 'no_targets':
+      return 'No targets were selected.';
     case 'target_gone':
       return 'The target vessel disappeared before the hail could open.';
     case 'already_hailing':
-      return 'This channel is already in a hail.';
+      return 'Your channel is already in an active hail. End it before starting a new one.';
+    case 'target_busy':
+      return 'The chosen target is already in another hail. Try again once it has ended.';
     case 'declined':
       return 'The target declined the hail.';
     case 'timeout':
       return 'The target did not answer within the ring window.';
+    case 'all_declined':
+      return 'Every target declined or did not answer.';
     default:
       return `Hail could not open: ${reason}`;
   }

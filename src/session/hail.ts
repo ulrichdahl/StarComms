@@ -51,12 +51,14 @@ import {
   AudioPlayerStatus, EndBehaviorType, NoSubscriberBehavior, StreamType,
   VoiceConnectionStatus, createAudioPlayer, createAudioResource,
   entersState, joinVoiceChannel,
-  type AudioPlayer, type AudioReceiveStream, type VoiceConnection,
+  type AudioPlayer, type VoiceConnection,
 } from '@discordjs/voice';
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
   type Client, type Message, type VoiceBasedChannel,
 } from 'discord.js';
+import { PassThrough } from 'node:stream';
+import { NwayMixer, subscribeManual } from './nway-mixer.js';
 import type { DB } from '../lib/db.js';
 import type { Fleet } from '../fleet/manager.js';
 import type { CueSet } from '../lib/cues.js';
@@ -81,7 +83,8 @@ export interface HailServiceConfig {
 export interface OpenHailInput {
   guildId: string;
   initiator: HailChannelSpec;
-  target: HailChannelSpec;
+  /** 1..N targets. Locked ones ring; unlocked auto-accept. */
+  targets: HailChannelSpec[];
 }
 
 export interface HailChannelSpec {
@@ -91,7 +94,13 @@ export interface HailChannelSpec {
 
 export type OpenHailResult =
   | { ok: true; hailId: number }
-  | { ok: false; reason: 'no_relays' | 'not_in_guild' | 'target_gone' | 'already_hailing' | string };
+  | {
+      ok: false;
+      reason:
+        | 'no_relays' | 'not_in_guild' | 'target_gone' | 'already_hailing'
+        | 'target_busy' | 'no_targets' | 'all_declined' | 'declined'
+        | 'timeout' | string;
+    };
 
 interface HailLeg {
   role: 'initiator' | 'target';
@@ -102,7 +111,7 @@ interface HailLeg {
   botClient: Client;
   connection: VoiceConnection;
   outboundPlayer: AudioPlayer;
-  receiveStream: AudioReceiveStream | null;
+  /** Sink-side resource for playbackDuration display in the heartbeat. */
   receiveResource: import('@discordjs/voice').AudioResource | null;
   endMessage: Message | null;
   cueRole: 'ready' | 'attention';
@@ -112,18 +121,41 @@ interface HailLeg {
   speakingStarts: number;
 }
 
+/** Per-target ring state, indexed by channel_id. */
+interface RingState {
+  resolver: (d: RingDecision) => void;
+  message: Message | null;
+}
+
 interface Hail {
   hailId: number;
   guildId: string;
-  legs: [HailLeg, HailLeg];
+  /** legs[0] is the initiator; legs[1..] are targets. */
+  legs: HailLeg[];
   silenceTimer: NodeJS.Timeout | null;
   maxHoldTimer: NodeJS.Timeout | null;
   heartbeatTimer: NodeJS.Timeout | null;
   openedAt: number;
-  ringResolver: ((d: RingDecision) => void) | null;
-  ringMessage: Message | null;
+  /**
+   * Ring state per locked target channelId. Present entries mean a
+   * ring is in flight; `handleAcceptDecline` calls the resolver.
+   */
+  rings: Map<string, RingState>;
+  /**
+   * Permanent per-sink output: a PassThrough fed by the mixer,
+   * wrapped once in an AudioResource so the sink's player never
+   * restarts.
+   */
+  sinkOutputs: Map<string, SinkOutput>;
+  /** N-way mixer — every source PCM sums into every non-self sink. */
+  mixer: NwayMixer | null;
   closing: boolean;
   closed: boolean;
+}
+
+interface SinkOutput {
+  passthrough: import('stream').PassThrough;
+  resource: import('@discordjs/voice').AudioResource;
 }
 
 export const HAIL_END_PREFIX = 'sc:hail:end:';
@@ -139,30 +171,118 @@ export const HAIL_DECLINE_PREFIX = 'sc:hail:decline:';
 export const SQUAD_NATOS = ['alfa', 'bravo', 'charlie'] as const;
 
 /**
- * Pure allocator: pick the first two available relay natos, skipping
- * those that are busy or whose Client is not reachable. Returns null if
- * fewer than two are free. Extracted from HailManager so the picking
- * logic can be tested without touching Discord or the DB.
+ * Pure allocator: pick the first `count` available relay natos,
+ * skipping those that are busy or whose Client is not reachable.
+ * Returns null if fewer than `count` are free. Extracted from
+ * HailManager so the picking logic can be tested without touching
+ * Discord or the DB.
  */
+export function pickN(
+  natos: readonly string[],
+  count: number,
+  isBusy: (nato: string) => boolean,
+  isReachable: (nato: string) => boolean,
+): string[] | null {
+  const free = natos.filter((n) => !isBusy(n) && isReachable(n));
+  if (free.length < count) return null;
+  return free.slice(0, count);
+}
+
+/** Compat shim so the existing pickTwo tests still pass. */
 export function pickTwo(
   natos: readonly string[],
   isBusy: (nato: string) => boolean,
   isReachable: (nato: string) => boolean,
 ): [string, string] | null {
-  const free = natos.filter((n) => !isBusy(n) && isReachable(n));
-  if (free.length < 2) return null;
-  return [free[0]!, free[1]!];
+  const picked = pickN(natos, 2, isBusy, isReachable);
+  return picked === null ? null : [picked[0]!, picked[1]!];
 }
 
 export class HailManager {
   private readonly hails = new Map<number, Hail>();
   private readonly busyNatos = new Set<string>();
+  /**
+   * Channels currently occupied by a hail — initiator OR target,
+   * in-flight open() OR fully established. Keyed by
+   * `${guildId}/${channelId}` so a channelId collision across guilds
+   * can never wrongly block. Populated synchronously at the start of
+   * open() before any await, so two concurrent opens where each
+   * targets the other cannot both slip past the check.
+   */
+  private readonly busyChannels = new Set<string>();
 
   constructor(private readonly cfg: HailServiceConfig) {}
+
+  private chanKey(guildId: string, channelId: string): string {
+    return `${guildId}/${channelId}`;
+  }
 
   activeCount(): number { return this.hails.size; }
 
   silenceCloseMs(): number { return this.cfg.silenceCloseMs; }
+
+  /** Number of relays currently free and reachable in the given guild. */
+  freeBotCount(guildId: string): number {
+    return this.freeBotNatos(guildId).length;
+  }
+
+  /**
+   * One-shot cue visit — a free relay joins the channel, plays the cue
+   * to completion, and disconnects. Fire-and-forget; if no relay is
+   * free the visit is skipped silently. Used for `established` on Allow
+   * hails and `disconnected` on Disable hails.
+   */
+  async playAnnouncement(
+    guildId: string,
+    channelId: string,
+    cueName: 'established' | 'disconnected',
+  ): Promise<void> {
+    const free = this.freeBotNatos(guildId);
+    const nato = free[0];
+    if (nato === undefined) return; // no relay to send — nicety, not critical.
+    this.busyNatos.add(nato);
+    try {
+      const botClient = this.cfg.fleet.clientFor(nato);
+      const botGuild = botClient.guilds.cache.get(guildId)
+        ?? await botClient.guilds.fetch(guildId);
+      const botUserId = botClient.user?.id;
+      if (botUserId === undefined) return;
+
+      const connection = joinVoiceChannel({
+        channelId, guildId,
+        adapterCreator: botGuild.voiceAdapterCreator,
+        selfDeaf: false,
+        selfMute: false,
+        group: botUserId,
+      });
+      try {
+        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+      } catch (err) {
+        connection.destroy();
+        console.warn(`announcement: bot ${nato} could not reach Ready on ${channelId}: ${errMsg(err)}`);
+        return;
+      }
+      const player = createAudioPlayer({
+        behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+      });
+      player.on('error', (err) => {
+        if (isDaveError(err)) return;
+        console.error(`announcement: player error on ${channelId}: ${err.message}`);
+      });
+      connection.subscribe(player);
+      try {
+        player.play(createCueResource(this.cfg.cues.get(cueName)));
+        await waitForPlayerIdle(player);
+      } catch (err) {
+        console.error(`announcement: play ${cueName} failed on ${channelId}: ${errMsg(err)}`);
+      } finally {
+        try { player.stop(true); } catch { /* ok */ }
+        try { connection.destroy(); } catch { /* ok */ }
+      }
+    } finally {
+      this.busyNatos.delete(nato);
+    }
+  }
 
   isBusyBot(nato: string): boolean { return this.busyNatos.has(nato); }
 
@@ -208,11 +328,21 @@ export class HailManager {
   ): 'ok' | 'not_owner' | 'not_ringing' {
     const hail = this.hails.get(hailId);
     if (hail === undefined) return 'not_ringing';
-    if (hail.ringResolver === null) return 'not_ringing';
-    const targetLeg = hail.legs.find((l) => l.role === 'target');
-    if (targetLeg === undefined) return 'not_ringing';
-    if (targetLeg.ownerUserId !== actorUserId) return 'not_owner';
-    hail.ringResolver(decision);
+    // Find the target whose owner matches this actor and whose ring is
+    // currently in flight.
+    const targetLeg = hail.legs.find(
+      (l) => l.role === 'target' && l.ownerUserId === actorUserId,
+    );
+    if (targetLeg === undefined) {
+      // The actor is not the owner of any target with an active ring.
+      // Distinguish "you don't own a hail target" from "your ring is
+      // already resolved" so the ephemeral is accurate.
+      const anyRingActive = hail.rings.size > 0;
+      return anyRingActive ? 'not_owner' : 'not_ringing';
+    }
+    const ring = hail.rings.get(targetLeg.channelId);
+    if (ring === undefined) return 'not_ringing';
+    ring.resolver(decision);
     return 'ok';
   }
 
@@ -241,17 +371,35 @@ export class HailManager {
   }
 
   async open(input: OpenHailInput): Promise<OpenHailResult> {
-    // Reject a duplicate initiator: 2-way hail only in this step.
-    for (const h of this.hails.values()) {
-      if (h.guildId !== input.guildId) continue;
-      const initiator = h.legs.find((l) => l.role === 'initiator');
-      if (initiator !== undefined && initiator.channelId === input.initiator.channelId) {
-        return { ok: false, reason: 'already_hailing' };
+    if (input.targets.length === 0) return { ok: false, reason: 'no_targets' };
+
+    // In-hail block: any channel this hail would touch — initiator or
+    // target — must not already be a leg of another hail. Covers both:
+    //   1. User A in an active hail (initiator or target) clicks Hail
+    //      on their own panel → refused as 'already_hailing'.
+    //   2. A and B hail each other simultaneously → whichever open()
+    //      reserves the channels first wins; the other refuses with
+    //      'already_hailing' (if the caller's own channel was reserved
+    //      by the winner as a target) or 'target_busy' (if only the
+    //      chosen target was reserved).
+    // Check and reserve run in one synchronous section — no await
+    // between check and add — so the race in scenario 2 is atomic.
+    const wanted = [
+      input.initiator.channelId,
+      ...input.targets.map((t) => t.channelId),
+    ];
+    for (let i = 0; i < wanted.length; i += 1) {
+      const ch = wanted[i]!;
+      if (this.busyChannels.has(this.chanKey(input.guildId, ch))) {
+        return { ok: false, reason: i === 0 ? 'already_hailing' : 'target_busy' };
       }
     }
+    for (const ch of wanted) this.busyChannels.add(this.chanKey(input.guildId, ch));
 
-    const pick = pickTwo(
+    const totalBots = 1 + input.targets.length;
+    const pick = pickN(
       SQUAD_NATOS,
+      totalBots,
       (n) => this.busyNatos.has(n),
       (n) => {
         const client = this.tryClient(n);
@@ -259,22 +407,23 @@ export class HailManager {
       },
     );
     if (pick === null) {
-      // Distinguish "no bots in this guild at all" from "all busy" so
-      // the operator gets an actionable message.
+      // Release the channel reservations — this open() is not going to
+      // reach the try/catch that would otherwise clean them up.
+      for (const ch of wanted) this.busyChannels.delete(this.chanKey(input.guildId, ch));
       const reachable = [...SQUAD_NATOS].filter((n) => {
         const c = this.tryClient(n);
         return c !== null && c.guilds.cache.has(input.guildId);
       });
-      if (reachable.length < 2) {
+      if (reachable.length < totalBots) {
         return { ok: false, reason: 'not_in_guild' };
       }
       return { ok: false, reason: 'no_relays' };
     }
-    const [initiatorNato, targetNato] = pick;
+    const initiatorNato = pick[0]!;
+    const targetNatos = pick.slice(1);
 
     // Reserve immediately so a second concurrent open sees them busy.
-    this.busyNatos.add(initiatorNato);
-    this.busyNatos.add(targetNato);
+    for (const n of pick) this.busyNatos.add(n);
 
     const now = Date.now();
     const insert = this.cfg.db.prepare(`
@@ -282,8 +431,11 @@ export class HailManager {
       VALUES (?, ?, ?)
     `).run(input.guildId, input.initiator.channelId, now);
     const hailId = Number(insert.lastInsertRowid);
-    logHailEvent(this.cfg.db, hailId, 'opened', input.initiator.ownerUserId, input.target.channelId);
+    for (const t of input.targets) {
+      logHailEvent(this.cfg.db, hailId, 'opened', input.initiator.ownerUserId, t.channelId);
+    }
 
+    let hail: Hail | null = null;
     try {
       const initiatorLeg = await this.joinLeg({
         role: 'initiator',
@@ -293,110 +445,133 @@ export class HailManager {
         ownerUserId: input.initiator.ownerUserId,
         cueRole: 'ready',
       });
-      const targetLeg = await this.joinLeg({
-        role: 'target',
-        botNato: targetNato,
-        guildId: input.guildId,
-        channelId: input.target.channelId,
-        ownerUserId: input.target.ownerUserId,
-        cueRole: 'attention',
-      });
+      const targetLegs: HailLeg[] = [];
+      for (let i = 0; i < input.targets.length; i += 1) {
+        const t = input.targets[i]!;
+        const nato = targetNatos[i]!;
+        targetLegs.push(await this.joinLeg({
+          role: 'target',
+          botNato: nato,
+          guildId: input.guildId,
+          channelId: t.channelId,
+          ownerUserId: t.ownerUserId,
+          cueRole: 'attention',
+        }));
+      }
 
-      const legs: [HailLeg, HailLeg] = [initiatorLeg, targetLeg];
-      const hail: Hail = {
+      const legs: HailLeg[] = [initiatorLeg, ...targetLegs];
+      hail = {
         hailId, guildId: input.guildId, legs,
         silenceTimer: null, maxHoldTimer: null, heartbeatTimer: null,
-        ringResolver: null, ringMessage: null,
+        rings: new Map(),
         openedAt: Date.now(),
+        sinkOutputs: new Map(),
+        mixer: null,
         closing: false, closed: false,
       };
       this.hails.set(hailId, hail);
 
-      // Ring phase — locked target has to accept before we proceed.
-      // Insert hail_participants rows once resolution is known, so the
-      // row's `decision` matches the outcome and satisfies NOT NULL.
-      const targetLocked = isChannelLocked(this.cfg.db, input.target.channelId);
-      let ringOutcome: RingDecision = 'accepted';
-      if (targetLocked) {
-        logHailEvent(this.cfg.db, hailId, 'ring_started', null, input.target.channelId);
-        ringOutcome = await this.ringForAccept(hail, targetLeg);
+      // Ring phase — every locked target rings in parallel. Unlocked
+      // targets are auto-accepted. The hail proceeds if at least one
+      // target ends up accepted.
+      const ringOutcomes = await Promise.all(targetLegs.map(async (leg) => {
+        if (!isChannelLocked(this.cfg.db, leg.channelId)) {
+          return { leg, decision: 'accepted' as RingDecision };
+        }
+        logHailEvent(this.cfg.db, hailId, 'ring_started', null, leg.channelId);
+        const decision = await this.ringForAccept(hail!, leg);
+        return { leg, decision };
+      }));
+
+      const accepted = ringOutcomes.filter((r) => r.decision === 'accepted').map((r) => r.leg);
+      const refused = ringOutcomes.filter((r) => r.decision !== 'accepted');
+
+      // Log per-target outcomes + write hail_participants rows.
+      const resolveTs = Date.now();
+      this.cfg.db.prepare(`
+        INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, decision)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(hailId, initiatorLeg.channelId, initiatorLeg.botNato, resolveTs, 'accepted');
+      for (const r of ringOutcomes) {
+        const decisionValue =
+          r.decision === 'accepted' ? 'accepted' :
+          r.decision === 'declined' ? 'declined' : 'timed_out';
+        if (r.decision === 'accepted') {
+          this.cfg.db.prepare(`
+            INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, decision)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(hailId, r.leg.channelId, r.leg.botNato, resolveTs, 'accepted');
+        } else {
+          this.cfg.db.prepare(`
+            INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, left_at, decision)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(hailId, r.leg.channelId, r.leg.botNato, resolveTs, resolveTs, decisionValue);
+          logHailEvent(
+            this.cfg.db, hailId,
+            r.decision === 'declined' ? 'declined' : 'timeout',
+            null, r.leg.channelId,
+          );
+        }
       }
 
-      const now = Date.now();
-      if (ringOutcome !== 'accepted') {
-        // Log the outcome per participant, then wind down with Busy.
-        logHailEvent(
-          this.cfg.db, hailId,
-          ringOutcome === 'declined' ? 'declined' : 'timeout',
-          null, input.target.channelId,
-        );
-        this.cfg.db.prepare(`
-          INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, left_at, decision)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(hailId, initiatorLeg.channelId, initiatorLeg.botNato, now, now, 'accepted');
-        this.cfg.db.prepare(`
-          INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, left_at, decision)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(
-          hailId, targetLeg.channelId, targetLeg.botNato, now, now,
-          ringOutcome === 'declined' ? 'declined' : 'timed_out',
-        );
-        await this.refuseHail(hail, initiatorLeg, targetLeg);
-        return { ok: false, reason: ringOutcome };
+      if (accepted.length === 0) {
+        // Everyone refused. Drop refused legs, play Busy on initiator, close.
+        await this.refuseHail(hail, initiatorLeg, refused.map((r) => r.leg));
+        return { ok: false, reason: 'all_declined' };
       }
 
-      // Accepted (either auto or after Accept click). Record both
-      // participants + log the accept event when a real click happened.
-      for (const leg of legs) {
-        this.cfg.db.prepare(`
-          INSERT INTO hail_participants (hail_id, channel_id, bot_id, joined_at, decision)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(hailId, leg.channelId, leg.botNato, now, 'accepted');
+      // Drop refused target legs immediately — bots leave silently.
+      // Free their channel reservations so a fresh hail to that same
+      // vessel isn't blocked by the just-refused attempt.
+      for (const r of refused) {
+        try { r.leg.outboundPlayer.stop(true); } catch { /* ok */ }
+        try { r.leg.connection.destroy(); } catch { /* ok */ }
+        this.busyNatos.delete(r.leg.botNato);
+        this.busyChannels.delete(this.chanKey(hail.guildId, r.leg.channelId));
       }
-      if (targetLocked) {
-        logHailEvent(
-          this.cfg.db, hailId, 'accepted',
-          targetLeg.ownerUserId, targetLeg.channelId,
-        );
+      // Reset legs to only initiator + accepted targets. Subsequent
+      // audio wiring + End buttons ignore refused legs.
+      hail.legs = [initiatorLeg, ...accepted];
+
+      for (const leg of accepted) {
+        logHailEvent(this.cfg.db, hailId, 'accepted', leg.ownerUserId, leg.channelId);
       }
 
-      // Cues concurrent, then wait D_c so relay audio does not step on them.
-      for (const leg of legs) {
+      // Cues concurrent on every accepted leg, then wait for every one
+      // to reach Idle so the mixer path doesn't step on cue playback.
+      // Cues vary in length across locales — no fixed D_c anymore.
+      const cuePlays = hail.legs.map((leg) => {
         leg.outboundPlayer.play(createCueResource(this.cfg.cues.get(leg.cueRole)));
-      }
-      await sleep(this.cfg.cues.expectedDurationMs);
+        return waitForPlayerIdle(leg.outboundPlayer);
+      });
+      await Promise.all(cuePlays);
 
-      // Wire the bidirectional relay AFTER cues finish.
-      this.wireLegAudio(hail, initiatorLeg, targetLeg);
-      this.wireLegAudio(hail, targetLeg, initiatorLeg);
+      // Wire the N-way audio graph.
+      this.wireHailAudio(hail);
 
-      // End buttons via the controller Client (only bot with SEND_MESSAGES
-      // in the vessel), so both sides see the button in their voice-text.
+      // End buttons via the controller — one per surviving leg.
       const controller = this.cfg.fleet.controllerClient();
-      for (const leg of legs) {
+      for (const leg of hail.legs) {
         leg.endMessage = await postEndButton(controller, leg.channelId, hailId).catch((err) => {
           console.error(`hail ${hailId}: end-button post failed on ${leg.channelId}: ${errMsg(err)}`);
           return null;
         });
       }
 
-      // Silence + max-hold timers + telemetry heartbeat.
       this.armSilence(hail);
       hail.maxHoldTimer = setTimeout(() => {
-        void this._close(hail, 'max_hold').catch(() => {});
+        void this._close(hail!, 'max_hold').catch(() => {});
       }, this.cfg.maxHoldMs);
       this.startHeartbeat(hail);
 
       return { ok: true, hailId };
     } catch (err) {
       console.error(`hail ${hailId}: open failed: ${errMsg(err)}`);
-      const hail = this.hails.get(hailId);
-      if (hail !== undefined) {
+      if (hail !== null) {
         await this._close(hail, 'error');
       } else {
-        // Never made it into the map. Free bots + close the row.
-        this.busyNatos.delete(initiatorNato);
-        this.busyNatos.delete(targetNato);
+        for (const n of pick) this.busyNatos.delete(n);
+        for (const ch of wanted) this.busyChannels.delete(this.chanKey(input.guildId, ch));
         this.cfg.db.prepare(
           `UPDATE active_hails SET closed_at = ?, close_reason = 'error' WHERE id = ?`,
         ).run(Date.now(), hailId);
@@ -453,7 +628,6 @@ export class HailManager {
       botClient,
       connection,
       outboundPlayer,
-      receiveStream: null,
       receiveResource: null,
       endMessage: null,
       cueRole: spec.cueRole,
@@ -485,34 +659,64 @@ export class HailManager {
     return leg;
   }
 
-  private wireLegAudio(hail: Hail, source: HailLeg, sink: HailLeg): void {
-    const stream = source.connection.receiver.subscribe(source.ownerUserId, {
-      end: { behavior: EndBehaviorType.AfterSilence, duration: this.cfg.silenceCloseMs },
-    });
-    stream.on('error', (err) => {
-      if (isDaveError(err)) { source.daveDrops += 1; return; }
-      console.error(`hail ${hail.hailId}: receive stream error on ${source.channelId}: ${err.message}`);
-    });
-    stream.on('end', () => {
-      console.log(`hail-diag: hail ${hail.hailId} receive stream END on ${source.channelId} [${source.botNato}]`);
-    });
-    stream.on('close', () => {
-      console.log(`hail-diag: hail ${hail.hailId} receive stream CLOSE on ${source.channelId} [${source.botNato}]`);
-    });
-    source.receiveStream = stream;
+  /**
+   * N-way audio graph — proper PCM mixing (spec §16 pulled forward
+   * from "future work" because last-speaker-wins wasn't good enough
+   * in practice). Every source is subscribed once for the whole
+   * hail and its opus packets are decoded to PCM. The `NwayMixer`
+   * runs a 20 ms tick that sums each source's latest PCM frame into
+   * every non-self sink, clips, and encodes one opus frame per sink.
+   *
+   * The `speaking.on('start')` listener stays wired but no longer
+   * drives audio routing — only the silence timer (any owner speech
+   * re-arms it) and the per-leg speakingStarts counter for
+   * diagnostics.
+   */
+  private wireHailAudio(hail: Hail): void {
+    // Permanent output per sink — mixer writes into these.
+    for (const sink of hail.legs) {
+      const pt = new PassThrough({ highWaterMark: 1 << 16 });
+      const resource = createAudioResource(pt, { inputType: StreamType.Opus });
+      sink.outboundPlayer.play(resource);
+      hail.sinkOutputs.set(sink.channelId, { passthrough: pt, resource });
+      sink.receiveResource = resource;
+    }
 
-    const resource = createAudioResource(stream, { inputType: StreamType.Opus });
-    source.receiveResource = resource;
-    sink.outboundPlayer.play(resource);
+    const mixer = new NwayMixer();
+    for (const leg of hail.legs) {
+      const sinkOutput = hail.sinkOutputs.get(leg.channelId);
+      if (sinkOutput === undefined) continue;
+      mixer.attachLeg({
+        channelId: leg.channelId,
+        ownerUserId: leg.ownerUserId,
+        receiverSubscribe: () => subscribeManual(leg.connection, leg.ownerUserId),
+        sinkPassthrough: sinkOutput.passthrough,
+        onDaveError: () => { leg.daveDrops += 1; },
+        // Every incoming opus packet from this leg's owner re-arms
+        // the silence timer. Using packet arrival (not the SPEAKING
+        // flag) means a target talking continuously without a >100 ms
+        // gap still counts as activity — the old speaking-start-only
+        // trigger would fire once at the start of a monologue and let
+        // the silence timer expire mid-sentence.
+        onAudio: () => {
+          if (hail.closing || hail.closed) return;
+          this.armSilence(hail);
+        },
+      });
+    }
+    mixer.start();
+    hail.mixer = mixer;
 
-    // Any speech by the source owner re-arms the silence timer.
-    // `speaking.on('start', userId)` fires on the connection's receiver.
-    source.connection.receiver.speaking.on('start', (userId) => {
-      if (userId !== source.ownerUserId) return;
-      source.speakingStarts += 1;
-      if (hail.closing || hail.closed) return;
-      this.armSilence(hail);
-    });
+    // Keep the SPEAKING-flag listener for the per-leg speakingStarts
+    // counter (diagnostic — shows utterance boundaries in the log)
+    // but no longer for silence timing.
+    for (const source of hail.legs) {
+      source.connection.receiver.speaking.on('start', (userId) => {
+        if (userId !== source.ownerUserId) return;
+        if (hail.closing || hail.closed) return;
+        source.speakingStarts += 1;
+      });
+    }
   }
 
   /** 5-second heartbeat — one line per active hail with per-leg counters. */
@@ -521,16 +725,25 @@ export class HailManager {
     hail.heartbeatTimer = setInterval(() => {
       if (hail.closed) return;
       const uptime = Math.round((Date.now() - hail.openedAt) / 1000);
+      const mixerStats = hail.mixer?.stats();
       for (const leg of hail.legs) {
         const inbound = leg.receiveResource?.playbackDuration ?? 0;
         const inboundS = (inbound / 1000).toFixed(1);
+        const srcStat = mixerStats?.sources.find((s) => s.channelId === leg.channelId);
+        const sinkStat = mixerStats?.sinks.find((s) => s.channelId === leg.channelId);
+        const mixStr = mixerStats === undefined
+          ? ''
+          : ` src(in=${srcStat?.in ?? 0} dec=${srcStat?.decoded ?? 0} fail=${srcStat?.failed ?? 0} ` +
+            `q=${srcStat?.queued ?? 0} since=${Math.round((srcStat?.sinceLastMs ?? 0) / 1000)}s ` +
+            `resub=${srcStat?.resubscribes ?? 0}) sink(wr=${sinkStat?.written ?? 0})`;
         console.log(
           `hail-hb: h${hail.hailId} +${uptime}s ${leg.role}[${leg.botNato}]→${leg.channelId} ` +
           `conn=${leg.connection.state.status} ` +
           `player=${leg.outboundPlayer.state.status} ` +
           `inboundS=${inboundS} ` +
           `speakingStarts=${leg.speakingStarts} ` +
-          `daveDrops=${leg.daveDrops}`,
+          `daveDrops=${leg.daveDrops}` +
+          mixStr,
         );
       }
     }, 5000);
@@ -566,7 +779,7 @@ export class HailManager {
    */
   private async ringForAccept(hail: Hail, targetLeg: HailLeg): Promise<RingDecision> {
     const controller = this.cfg.fleet.controllerClient();
-    hail.ringMessage = await postRingButtons(controller, targetLeg.channelId, hail.hailId)
+    const message = await postRingButtons(controller, targetLeg.channelId, hail.hailId)
       .catch((err) => {
         console.error(`hail ${hail.hailId}: ring buttons post failed: ${errMsg(err)}`);
         return null;
@@ -582,62 +795,64 @@ export class HailManager {
         done = true;
         if (ringTimer !== null) clearTimeout(ringTimer);
         if (maxTimer !== null) clearTimeout(maxTimer);
-        hail.ringResolver = null;
+        hail.rings.delete(targetLeg.channelId);
+        // Best-effort ring-button removal — the caller (open() or
+        // refuseHail) will also try again if a race leaves the message.
+        if (message !== null) void message.delete().catch(() => {});
         resolve(result);
       };
-      hail.ringResolver = finish;
+      hail.rings.set(targetLeg.channelId, { resolver: finish, message });
 
-      const playRing = (): void => {
+      // Play → wait for the cue to finish → gap → play again. Cues
+      // may be longer or shorter than the interval and we never want
+      // to stack them; chaining on Idle keeps them clean.
+      const playRing = async (): Promise<void> => {
         if (done || hail.closing || hail.closed) return;
         try {
           targetLeg.outboundPlayer.play(createCueResource(this.cfg.cues.get('ring')));
+          await waitForPlayerIdle(targetLeg.outboundPlayer, 5_000);
         } catch (err) {
           console.error(`hail ${hail.hailId}: ring cue play failed: ${errMsg(err)}`);
         }
-        ringTimer = setTimeout(playRing, this.cfg.ringIntervalMs);
+        if (done || hail.closing || hail.closed) return;
+        ringTimer = setTimeout(() => { void playRing(); }, this.cfg.ringIntervalMs);
       };
-      playRing();
+      void playRing();
 
       maxTimer = setTimeout(() => finish('timeout'), this.cfg.ringMaxMs);
     });
   }
 
   /**
-   * Wind-down for a hail that was refused (declined or timed out).
-   * Plays `busy` in the initiator's channel — no `end` on the target
-   * because the hail never fully opened — disconnects both bots, and
-   * writes the close row with reason 'all_declined'.
+   * Wind-down for a hail where every target refused. Plays `busy` in
+   * the initiator's channel (no `end` on the targets — the hail never
+   * fully opened), disconnects every bot, writes close_reason
+   * 'all_declined'.
    */
   private async refuseHail(
-    hail: Hail, initiatorLeg: HailLeg, _targetLeg: HailLeg,
+    hail: Hail, initiatorLeg: HailLeg, refusedTargets: HailLeg[],
   ): Promise<void> {
     hail.closing = true;
     this.stopHeartbeat(hail);
 
-    // Delete ring buttons before Busy plays so the target does not see
-    // stale controls while the initiator hears the refuse cue.
-    if (hail.ringMessage !== null) {
-      await hail.ringMessage.delete().catch(() => {});
-      hail.ringMessage = null;
-    }
-
     try {
       initiatorLeg.outboundPlayer.play(createCueResource(this.cfg.cues.get('busy')));
+      await waitForPlayerIdle(initiatorLeg.outboundPlayer);
     } catch (err) {
       console.error(`hail ${hail.hailId}: busy cue play failed: ${errMsg(err)}`);
     }
-    await sleep(this.cfg.cues.expectedDurationMs);
 
-    for (const leg of hail.legs) {
+    for (const leg of [initiatorLeg, ...refusedTargets]) {
       try { leg.outboundPlayer.stop(true); } catch { /* ok */ }
       try { leg.connection.destroy(); } catch { /* ok */ }
+      this.busyNatos.delete(leg.botNato);
+      this.busyChannels.delete(this.chanKey(hail.guildId, leg.channelId));
     }
 
     const now = Date.now();
     this.cfg.db.prepare(
       `UPDATE active_hails SET closed_at = ?, close_reason = ? WHERE id = ?`,
     ).run(now, 'all_declined', hail.hailId);
-    for (const leg of hail.legs) this.busyNatos.delete(leg.botNato);
     logHailEvent(this.cfg.db, hail.hailId, 'ended_all', null, null, 'all_declined');
 
     hail.closed = true;
@@ -661,32 +876,31 @@ export class HailManager {
     }
     if (hail.silenceTimer !== null) { clearTimeout(hail.silenceTimer); hail.silenceTimer = null; }
     if (hail.maxHoldTimer !== null) { clearTimeout(hail.maxHoldTimer); hail.maxHoldTimer = null; }
-    // If a ring is still in flight (initiator left before the target
-    // resolved), collapse it as 'timeout' so open() unblocks and the
-    // refuseHail path takes over. The DB row will already have been
-    // marked closed by the caller of _close, but the ring buttons must
-    // be removed either way.
-    if (hail.ringResolver !== null) {
-      hail.ringResolver('timeout');
-      hail.ringResolver = null;
-    }
-    if (hail.ringMessage !== null) {
-      await hail.ringMessage.delete().catch(() => {});
-      hail.ringMessage = null;
+    // Cancel every in-flight ring (initiator left before every target
+    // resolved). Each resolver deletes its own message and drops
+    // itself from `hail.rings`.
+    for (const ring of [...hail.rings.values()]) {
+      ring.resolver('timeout');
     }
 
-    // Tear down inbound audio first so cues do not fight remote audio.
-    for (const leg of hail.legs) {
-      if (leg.receiveStream !== null) {
-        try { leg.receiveStream.destroy(); } catch { /* already dead */ }
-      }
+    // Stop the mixer (destroys its receive subscriptions internally),
+    // then end the sink PassThroughs so the cue path (below) doesn't
+    // fight remote audio.
+    if (hail.mixer !== null) {
+      hail.mixer.stop();
+      hail.mixer = null;
     }
+    for (const out of hail.sinkOutputs.values()) {
+      try { out.passthrough.end(); } catch { /* ok */ }
+    }
+    hail.sinkOutputs.clear();
 
-    // Play `end` cue on both, wait D_c.
-    for (const leg of hail.legs) {
+    // Play `end` on every remaining leg, wait for all to finish.
+    const endPlays = hail.legs.map((leg) => {
       leg.outboundPlayer.play(createCueResource(this.cfg.cues.get('end')));
-    }
-    await sleep(this.cfg.cues.expectedDurationMs);
+      return waitForPlayerIdle(leg.outboundPlayer);
+    });
+    await Promise.all(endPlays);
 
     // Stop players, disconnect both bots.
     for (const leg of hail.legs) {
@@ -711,6 +925,7 @@ export class HailManager {
         `UPDATE hail_participants SET left_at = ? WHERE hail_id = ? AND channel_id = ?`,
       ).run(now, hail.hailId, leg.channelId);
       this.busyNatos.delete(leg.botNato);
+      this.busyChannels.delete(this.chanKey(hail.guildId, leg.channelId));
     }
     logHailEvent(this.cfg.db, hail.hailId, 'ended_all', null, null, reason);
 
@@ -782,19 +997,20 @@ function isDaveError(err: Error): boolean {
   return /DecryptionFailed|Unencrypted/i.test(err.message);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Ensure a player has settled to Idle before we drop references. Used in tests. */
-export async function _waitIdle(player: AudioPlayer, timeoutMs = 200): Promise<void> {
+/**
+ * Wait for an AudioPlayer to reach Idle (resource finished / stopped).
+ * Used at every cue-play boundary so we proceed only after the cue is
+ * actually heard — replaces the old fixed-duration `sleep(D_c)` sync.
+ * The timeout is a safety cap in case the player never idles (e.g.,
+ * connection died mid-cue).
+ */
+async function waitForPlayerIdle(player: AudioPlayer, timeoutMs = 15_000): Promise<void> {
   if (player.state.status === AudioPlayerStatus.Idle) return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    player.once(AudioPlayerStatus.Idle, () => { clearTimeout(timer); resolve(); });
-  });
+  try {
+    await entersState(player, AudioPlayerStatus.Idle, timeoutMs);
+  } catch { /* timeout — proceed anyway */ }
 }

@@ -39,32 +39,56 @@ export interface PanelRender {
 
 export function buildPanel(state: VesselState): PanelRender {
   const owner = `<@${state.ownerUserId}>`;
-  const status = [
-    `owner: ${owner}`,
-    `lock: ${state.locked ? '🔒 locked' : '🔓 open'}`,
-    `limit: ${state.userLimit === 0 ? 'unlimited' : String(state.userLimit)}`,
-    `hails: ${state.hailsEnabled ? `🛰️ **${state.callsign ?? '?'}**` : '📴 disabled'}`,
-  ].join('  ·  ');
 
+  // Stacked status — one line per fact with a leading glyph. Easier
+  // for dyslexic readers to scan than a dot-separated single line:
+  // each row has a fixed vertical position and a distinct starting
+  // shape.
+  const lockLine = state.locked
+    ? '🔒  Locked — only invited members can join'
+    : '🔓  Open — anyone with view access can join';
+  const limitLine = state.userLimit === 0
+    ? '👥  No user limit'
+    : `👥  Limit: ${state.userLimit}`;
+  const hailsLine = state.hailsEnabled
+    ? `📡  Hails on — 🛰️ **${state.callsign ?? '?'}**`
+    : '📡  Hails off';
+  const status = [lockLine, limitLine, hailsLine].join('\n');
+
+  // ── row 1: vessel controls ────────────────────────────────────
   const rename = new ButtonBuilder()
     .setCustomId(PANEL_IDS.rename)
+    .setEmoji('✏️')
     .setLabel('Rename')
     .setStyle(ButtonStyle.Secondary);
   const lockToggle = new ButtonBuilder()
     .setCustomId(PANEL_IDS.lockToggle)
+    // Icon swaps with state so shape carries meaning even if the
+    // "Lock" / "Unlock" text mis-reads.
+    .setEmoji(state.locked ? '🔓' : '🔒')
     .setLabel(state.locked ? 'Unlock' : 'Lock')
     .setStyle(state.locked ? ButtonStyle.Success : ButtonStyle.Secondary);
   const limit = new ButtonBuilder()
     .setCustomId(PANEL_IDS.limit)
+    .setEmoji('👥')
     .setLabel('Limit')
     .setStyle(ButtonStyle.Secondary);
   const kick = new ButtonBuilder()
     .setCustomId(PANEL_IDS.kick)
+    // Boot — flesh/brown, reads on the red Danger background where
+    // 🚫 (red-on-red) vanished. Semantic bonus: "boot from server"
+    // is Discord-culture-native for kick.
+    .setEmoji('🥾')
     .setLabel('Kick')
     .setStyle(ButtonStyle.Danger);
 
+  // ── row 2: hail controls ──────────────────────────────────────
   const hailsToggle = new ButtonBuilder()
     .setCustomId(PANEL_IDS.hailsToggle)
+    // 📡 satellite dish when enabling (signal-open), 🔕 muted-bell
+    // when disabling — icons carry the state change even if the
+    // "Allow hails" / "Disable hails" text mis-reads.
+    .setEmoji(state.hailsEnabled ? '🔕' : '📡')
     .setLabel(state.hailsEnabled ? 'Disable hails' : 'Allow hails')
     .setStyle(state.hailsEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
     // Callsign required to enable hails. If already enabled, the button
@@ -72,6 +96,9 @@ export function buildPanel(state: VesselState): PanelRender {
     .setDisabled(!state.hailsEnabled && state.callsign === null);
   const hail = new ButtonBuilder()
     .setCustomId(PANEL_IDS.hail)
+    // Studio mic — "speak into this now". Primary is deliberately
+    // the only Primary in the panel: one loud button, one meaning.
+    .setEmoji('🎙️')
     .setLabel('Hail')
     .setStyle(ButtonStyle.Primary)
     // Hail requires the caller's own vessel to be registered — otherwise
