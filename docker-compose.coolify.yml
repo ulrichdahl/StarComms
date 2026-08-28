@@ -1,0 +1,67 @@
+# Coolify-managed deployment stack.
+#
+# In the Coolify UI:
+#   1. New Resource → Application → Public Repository (or Private + connect GitHub).
+#      Point it at github.com/<owner>/StarComms, branch main.
+#   2. Application type: Docker Compose.
+#      Compose file: docker-compose.coolify.yml   (NOT docker-compose.yml — that
+#      one bind-mounts your local dev tree.)
+#   3. Environment Variables:
+#      SB_TOKEN_CONTROLLER   ← from the Discord Developer Portal
+#      SB_TOKEN_ALFA
+#      SB_TOKEN_BRAVO
+#      SB_TOKEN_CHARLIE
+#      Mark all four as "Is Build Variable? No" and "Is Literal? Yes"
+#      (they hold secrets — nothing to interpolate).
+#   4. Storages (Persistent Storage tab):
+#      • The three named volumes below are auto-created by Coolify.
+#      • Add a File Mount:
+#          Source: pasted content of your local config/fleet.yaml
+#                  (see config/fleet.example.yaml for the shape)
+#          Destination: /etc/starcomms/fleet.yaml
+#      • Add a Directory Mount for cue audio at /app/cues, then upload
+#        your WAVs through Coolify's file browser — or, after the first
+#        deploy, `docker cp cues/. <container>:/app/cues/`.
+#   5. Deploy.
+#
+# The bot exposes nothing publicly — Discord voice is outbound UDP only,
+# and /healthz on port 3000 is only used by the internal healthcheck.
+# You do NOT need a Traefik / Caddy domain on this application.
+
+services:
+  bot:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_PATH: /data/starcomms.db
+      CONFIG_PATH: /etc/starcomms/fleet.yaml
+      STATUS_PORT: "3000"
+      LOG_FORMAT: json
+      # Fleet tokens — injected by Coolify's env manager.
+      SB_TOKEN_CONTROLLER: ${SB_TOKEN_CONTROLLER}
+      SB_TOKEN_ALFA:       ${SB_TOKEN_ALFA}
+      SB_TOKEN_BRAVO:      ${SB_TOKEN_BRAVO}
+      SB_TOKEN_CHARLIE:    ${SB_TOKEN_CHARLIE}
+    volumes:
+      - starcomms-data:/data
+      - starcomms-config:/etc/starcomms:ro
+      - starcomms-cues:/app/cues:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+volumes:
+  starcomms-data:
+  starcomms-config:
+  starcomms-cues:

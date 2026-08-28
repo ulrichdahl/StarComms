@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Star Comms relay mark: the buddy promoted to lead. Amber
+       satellite dominant, small cyan controller at the far end of the
+       orbit. Dashed arcs read as an active transmission — the signal
+       in flight — and set the relay apart from StarBuddy's solid arcs
+       at a glance. -->
+  <defs>
+    <linearGradient id="star" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9BE4F0"/>
+      <stop offset="1" stop-color="#3FB2C8"/>
+    </linearGradient>
+    <linearGradient id="buddy" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F5D28A"/>
+      <stop offset="1" stop-color="#D99A3A"/>
+    </linearGradient>
+  </defs>
+  <path d="M 44 176 A 92 92 0 0 1 176 44" fill="none" stroke="#5BC8DB" stroke-opacity="0.55" stroke-width="6" stroke-linecap="round" stroke-dasharray="14 10"/>
+  <path d="M 196 60 A 92 92 0 0 1 212 108" fill="none" stroke="#5BC8DB" stroke-opacity="0.3" stroke-width="6" stroke-linecap="round" stroke-dasharray="10 8"/>
+  <!-- amber relay star — the satellite's identity, dominant -->
+  <path d="M112 28 Q120 118 202 128 Q120 138 112 228 Q104 138 22 128 Q104 118 112 28 Z" fill="url(#buddy)"/>
+  <!-- small cyan controller star — the base at the other end -->
+  <path d="M190 148 Q193 185 232 190 Q193 195 190 232 Q187 195 148 190 Q187 185 190 148 Z" fill="url(#star)"/>
+</svg>

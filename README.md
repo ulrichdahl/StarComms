@@ -8,6 +8,9 @@ talks. No speech recognition anywhere; every action is user-initiated
 through slash commands or button clicks.
 
 Full specification: **[`docs/spec.html`](docs/spec.html)**.
+Deploying to a self-hosted server: **[`docs/coolify.md`](docs/coolify.md)**.
+Licensed under **[AGPL-3.0](LICENSE)** — see the last section of
+`docs/coolify.md` for what §13 means when you run a hosted instance.
 
 ---
 
