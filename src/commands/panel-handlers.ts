@@ -511,7 +511,7 @@ async function handleTransferPick(
   await interaction.deferUpdate();
   const result = await transferOwnership(
     deps, found.channel, state.ownerUserId, target,
-    s.vessel.handedOver(state.ownerUserId, target.toString()),
+    s.vessel.handedOver(target.toString()),
     'Star Comms: transfer via panel',
   );
   const content = result === 'ok'
