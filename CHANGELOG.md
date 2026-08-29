@@ -3,6 +3,23 @@
 All notable changes to Star Comms. Versions are semver `major.minor.patch`;
 each entry mirrors the GitHub release description on the matching tag.
 
+## 0.2.2 — 2026-08-29
+
+Patch release: cue audio lives on a named volume, so a fresh deploy needs no host-side steps.
+
+### What's in this release
+
+#### Cues on a named volume
+- `docker-compose.coolify.yml` mounts `starcomms-cues:/app/cues` (named volume) instead of a bind mount of a host directory. Docker copies the image's `node` ownership onto an empty named volume on first mount — the same mechanism that makes `/data` writable — so the boot-time cue generation introduced in 0.2.1 can write immediately. The manual `chown -R 1000:1000 …` step is gone.
+- The entrypoint's not-writable hint now describes both remedies (named volume, or chown a bind directory).
+
+#### Docs
+- `docs/coolify.md` Cues section: a standard install has nothing to do; explains named volume vs bind mount; `docker cp` recipe for replacing voices with hand-made WAVs; migration note for ≤ 0.2.1 installs.
+
+### Upgrading from 0.2.1
+1. Redeploy. Coolify creates the `starcomms-cues` volume; the first boot logs `cues: 22 written, 0 kept`.
+2. The old host directory `/data/coolify/applications/<APP_UUID>/cues` is no longer mounted. If it held hand-made voices, copy them in: `docker cp <dir>/. bot-<APP_UUID>:/app/cues/`, then restart. Otherwise delete it.
+
 ## 0.2.1 — 2026-08-29
 
 Patch release: cue audio is generated automatically inside the deployed container.

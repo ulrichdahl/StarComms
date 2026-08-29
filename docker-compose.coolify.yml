@@ -19,12 +19,12 @@
 #      • ./config/fleet.yaml is a relative bind mount. Coolify turns it into
 #        an editable file entry in the Storages tab — paste your fleet.yaml
 #        there (see config/fleet.example.yaml for the shape), save, restart.
-#      • ./cues is a relative bind mount backed by a real host directory,
-#        /data/coolify/applications/<uuid>/cues. On every start the
-#        container generates any cue file that is missing (espeak-ng) and
-#        never overwrites one that exists — so drop hand-made WAVs in to
-#        replace voices. Needs a one-time `chown 1000:1000` of that host
-#        directory; until then boot logs a hint and skips generation.
+#      • starcomms-cues is a named volume, auto-created. Like /data it
+#        inherits `node` ownership from the image on first mount, so the
+#        container can write to it with no host-side chown. On every start
+#        the container generates any cue file that is missing (espeak-ng)
+#        and never overwrites one that exists — to replace a voice,
+#        `docker cp` your WAV over it (see docs/coolify.md).
 #   5. Deploy.
 #
 # The bot exposes nothing publicly — Discord voice is outbound UDP only,
@@ -55,8 +55,11 @@ services:
       # editable entry in Storages. Do not replace with named volumes — an
       # empty named volume at /etc/starcomms shadows any file mount.
       - ./config/fleet.yaml:/etc/starcomms/fleet.yaml:ro
-      # Writable so `./generate-cues.sh` can run inside the container.
-      - ./cues:/app/cues
+      # Named volume, NOT a bind mount: Docker copies the image's node
+      # ownership onto an empty named volume, whereas a bind mount shows
+      # the host directory's (root) ownership and the entrypoint's cue
+      # generation would need a manual chown.
+      - starcomms-cues:/app/cues
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
       interval: 30s
@@ -71,3 +74,4 @@ services:
 
 volumes:
   starcomms-data:
+  starcomms-cues:
