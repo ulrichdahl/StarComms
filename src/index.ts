@@ -18,6 +18,7 @@ import { MessageFlags } from 'discord.js';
 import { intEnv, loadEnv, optionalEnv } from './lib/env.js';
 import { loadConfig, redactMember, type Locale } from './lib/config.js';
 import { stringsFor, type Strings } from './lib/i18n.js';
+import { ownVersion } from './lib/pkg.js';
 import { openDb } from './lib/db.js';
 import { loadCueLibrary, type CueLibrary } from './lib/cues.js';
 import { bootSweep, formatSweep } from './fleet/boot-sweep.js';
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
   const dbPath = optionalEnv('DB_PATH', 'data/starcomms.db');
   const port = intEnv('STATUS_PORT', 3000);
 
+  console.log(`star-comms v${ownVersion()}`);
   console.log(`config: ${configPath}`);
   const config = loadConfig(configPath);
   console.log(`fleet: 1 controller + ${config.fleet.length} relay(s)`);
@@ -167,7 +169,7 @@ async function main(): Promise<void> {
     [SUBCOMMANDS.callsign]: makeCallsignHandler(db, strings),
     [SUBCOMMANDS.status]: async (interaction) => {
       const bots = fleet.states();
-      const lines = [strings(interaction.guildId ?? '').status.title];
+      const lines = [`${strings(interaction.guildId ?? '').status.title} · v${ownVersion()}`];
       for (const b of bots) {
         lines.push(`\`${b.role.padEnd(10)}\` **${b.nato}** — ${b.status} ${b.tag ?? ''} guilds=${b.guildIds.length}`);
       }

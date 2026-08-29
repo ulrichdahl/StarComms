@@ -9,6 +9,7 @@
  */
 
 import { createServer, type Server } from 'node:http';
+import { ownVersion } from '../lib/pkg.js';
 import type { SweepCounts } from './boot-sweep.js';
 import type { BotState, Fleet } from './manager.js';
 
@@ -19,6 +20,7 @@ export interface HealthReport {
   reason: string;
   bots: BotState[];
   sweep: SweepCounts;
+  version: string;
   startedAt: string;
   uptimeSec: number;
 }
@@ -48,6 +50,7 @@ export function buildReport(
   const { verdict, reason } = judge(bots);
   return {
     verdict, reason, bots, sweep,
+    version: ownVersion(),
     startedAt: startedAt.toISOString(),
     uptimeSec: Math.round((Date.now() - startedAt.getTime()) / 1000),
   };

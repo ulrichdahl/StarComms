@@ -11,6 +11,7 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, join, parse as parsePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -34,6 +35,16 @@ function walkUpFor(start: string, name: string): string | null {
     if (parent === dir || dir === root) return null;
     dir = parent;
   }
+}
+
+/**
+ * Star Comms' own version, from the package.json above this module —
+ * works from `src/lib` (tsx) and `dist/lib` (built) alike. Shown in
+ * `/star-comms status` and `/healthz` so an operator can tell which
+ * release a deployment is running.
+ */
+export function ownVersion(): string {
+  return walkUpFor(dirname(fileURLToPath(import.meta.url)), 'star-comms') ?? 'unknown';
 }
 
 export function packageVersion(name: string): string | null {
