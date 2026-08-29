@@ -16,8 +16,8 @@ Licensed under **[AGPL-3.0](LICENSE)** — see the last section of
 
 ## Status
 
-**0.2.3 — in production.** The full v1 flow ships: join-to-create
-vessels with an in-channel control panel (Rename, Lock, Limit, Kick,
+**0.3.0 — in production.** The full v1 flow ships: join-to-create
+vessels with an in-channel control panel (Rename, Lock, Limit, Kick, Transfer,
 Allow/Disable hails, Hail), per-member callsigns, N-way hails with
 ring/Accept/Decline for locked targets, voice cues, reconciliation,
 and per-guild language (`/star-comms set-language`: English, Dansk,
