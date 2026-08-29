@@ -16,11 +16,12 @@ Licensed under **[AGPL-3.0](LICENSE)** — see the last section of
 
 ## Status
 
-**Step 3 of 10** (spec §15) — callsign registry. `/star-comms
-register <callsign>` stores a per-member guild-scoped ship name.
-`unregister` removes it and drops the member's vessels from the
-hail directory. `callsign` reports the current value. Subsequent
-steps add the control panel buttons and the hail flow.
+**0.2.0 — in production.** The full v1 flow ships: join-to-create
+vessels with an in-channel control panel (Rename, Lock, Limit, Kick,
+Allow/Disable hails, Hail), per-member callsigns, N-way hails with
+ring/Accept/Decline for locked targets, voice cues, reconciliation,
+and per-guild language (`/star-comms set-language`: English, Dansk,
+English (Pirate), Dansk (Sørøver)). See [`CHANGELOG.md`](CHANGELOG.md).
 
 The receive spike (`src/spike/receive.ts`) is retained as a DAVE
 smoke test — run it after any `@discordjs/voice` or `@snazzah/davey`
