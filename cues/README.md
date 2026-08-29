@@ -44,6 +44,8 @@ other locale that is missing is skipped with a warning; guilds set to it
 hear the default locale's cues until the files are installed.
 
 Audio files are gitignored. `./generate-cues.sh` produces all four locales
-with espeak-ng (`LOCALES="en-pirate" ./generate-cues.sh` for a subset);
+with espeak-ng (`LOCALES="en-pirate" ./generate-cues.sh` for a subset) —
+locally, or inside the deployed container, which ships the script and
+espeak-ng (see `docs/coolify.md`);
 `scripts/gen-cues.sh` makes sine-wave placeholders; `generate.sh` is the
 Piper variant for a warmer voice.

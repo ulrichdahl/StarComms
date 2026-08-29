@@ -84,33 +84,51 @@ trigger one deploy first, then come back.
 
 ### Cues
 
-The mount is read-only inside the container, so `docker cp` into it
-fails. Copy onto the host directory instead, matching the paths in
-`fleet.yaml`:
+The cue directory is a host directory bind-mounted at `/app/cues`. It
+starts empty; populate it either way below, then **Restart** — cues are
+pre-encoded and cached in memory at boot.
+
+**Option A — generate inside the container.** The image ships
+`generate-cues.sh` plus espeak-ng and ffmpeg. The host directory is
+created by Coolify as root, and the container runs as `node` (uid 1000),
+so make it writable once from the host:
+
+```bash
+chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues
+```
+
+Then Coolify → app → **Terminal** (pick the `bot` container):
+
+```bash
+./generate-cues.sh                       # all four locales + ring/end
+LOCALES="en-pirate da-pirate" ./generate-cues.sh   # a subset
+ls -R cues
+```
+
+**Option B — copy from a workstation.** Run `./generate-cues.sh` locally
+(or bring your own WAVs — Piper voices sound warmer, see
+`generate.sh`) and copy the tree in:
 
 ```bash
 scp -r cues/. <coolify-host>:/data/coolify/applications/<APP_UUID>/cues/
-ssh <coolify-host> 'chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues'   # container runs as node (uid 1000)
+ssh <coolify-host> 'chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues'
 ```
 
-Expected layout:
+Expected layout, matching the paths in `fleet.yaml`:
 
 ```
 cues/
-  ring.wav
-  end.wav
-  en/
-    ready.wav
-    attention.wav
-    busy.wav
-    established.wav
-    disconnected.wav
+  ring.wav  end.wav
+  en/        ready attention busy established disconnected  .wav
+  da/        klar  giv_agt   optaget etableret afbrudt      .wav
+  en-pirate/ same names as en
+  da-pirate/ same names as da
 ```
 
-Only the `locale` / `cue_set` selected in `fleet.yaml` is loaded, so
-other locale directories are optional. Startup validates the assets and
-refuses to run if any are missing — until this step is done the
-container will crash-loop, which is expected.
+Only locales declared under `cue_sets` in `fleet.yaml` are loaded. The
+default locale must load or the container will crash-loop (expected
+until this step is done); any other locale that is missing is skipped
+with a warning and guilds set to it hear the default locale's audio.
 
 ### `SqliteError: unable to open database file`
 

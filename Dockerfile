@@ -6,8 +6,11 @@ ARG NODE_IMAGE=node:22-bookworm-slim
 
 FROM ${NODE_IMAGE} AS base
 ENV NODE_ENV=production
+# espeak-ng is here so `./generate-cues.sh` can run inside the deployed
+# container (Coolify → Terminal) to (re)generate cue audio for any locale
+# without a workstation round-trip.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+ && apt-get install -y --no-install-recommends ffmpeg espeak-ng curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
@@ -26,13 +29,15 @@ RUN npm run build && npm prune --omit=dev
 FROM base AS runtime
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json ./
+COPY package.json generate-cues.sh ./
 # The SQLite volume mounts at /data. Create it owned by `node` here: Docker
 # copies the image directory's ownership onto an empty named volume on first
 # mount, so the unprivileged process can create starcomms.db. Without this
 # the mount point is root:root 755 and startup dies with
 # "SqliteError: unable to open database file".
-RUN mkdir -p /data && chown node:node /data
+# /app/cues is the cue-audio mount; owned by node for the same reason so an
+# in-container `./generate-cues.sh` can write to it.
+RUN mkdir -p /data /app/cues && chown node:node /data /app/cues
 USER node
 EXPOSE 3000
 CMD ["node", "dist/index.js"]
