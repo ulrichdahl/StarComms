@@ -10,8 +10,8 @@
 #      handler runs on `docker stop`.
 #
 # Generation is best-effort: a directory the `node` user cannot write to
-# (Coolify creates bind directories as root) logs a hint and the fleet
-# still boots — the cue loader then reports exactly what is missing.
+# (a bind mount of a root-owned host directory, say) logs a hint and the
+# fleet still boots — the cue loader then reports exactly what is missing.
 #
 #   CUES_DIR       default /app/cues
 #   GENERATE_CUES  set to 0 to skip generation entirely
@@ -26,7 +26,7 @@ if [ "${GENERATE_CUES:-1}" = "1" ]; then
       || echo "cues: generation failed — continuing; run ./generate-cues.sh from the terminal to see why" >&2
   else
     echo "cues: $CUES_DIR is not writable by uid $(id -u) — skipping generation." >&2
-    echo "cues: on the host: chown -R 1000:1000 <the directory mounted at $CUES_DIR>, then restart." >&2
+    echo "cues: mount a named volume there (inherits node ownership), or chown -R 1000:1000 the bind-mounted host directory, then restart." >&2
   fi
 fi
 

@@ -65,9 +65,9 @@ therefore declares everything itself:
 |---|---|
 | `starcomms-data:/data` | Named volume, auto-created. Holds the SQLite DB. Nothing to do — the image ships `/data` owned by `node`, and Docker copies that ownership onto the empty volume on first mount. |
 | `./config/fleet.yaml:/etc/starcomms/fleet.yaml:ro` | Relative **file** bind mount → an editable file entry in Storages. |
-| `./cues:/app/cues:ro` | Relative **directory** bind mount → a real host directory. |
+| `starcomms-cues:/app/cues` | Named volume, auto-created. Cue audio; filled in by the container itself on boot. |
 
-Both relative mounts are materialised under
+The `fleet.yaml` mount is materialised under
 `/data/coolify/applications/<APP_UUID>/` on the host after the first
 deploy attempt (the uuid is in the app's URL and in the container name,
 `bot-<APP_UUID>`).
@@ -84,40 +84,43 @@ trigger one deploy first, then come back.
 
 ### Cues
 
-The cue directory is a host directory bind-mounted at `/app/cues`.
-**On every start the container fills in whatever is missing**: the
-entrypoint runs `generate-cues.sh` in skip-existing mode (espeak-ng +
-ffmpeg are in the image), so a first deploy boots with a complete set
-for all four locales and a file that already exists is never touched.
+Cue audio lives on the `starcomms-cues` named volume mounted at
+`/app/cues`. **Nothing to do for a standard install:** on every start the
+container fills in whatever is missing — the entrypoint runs
+`generate-cues.sh` in skip-existing mode (espeak-ng + ffmpeg are in the
+image) — so the first boot produces a complete set for all four locales
+(22 files) and a file that already exists is never touched.
 
-One prerequisite: Coolify creates the host directory as root and the
-container runs as `node` (uid 1000). Make it writable once:
+Why a named volume and not a host directory like the config file: Docker
+copies the image's `node` ownership onto an empty named volume on first
+mount (the same mechanism that makes `/data` writable), whereas a bind
+mount shows the host directory's root ownership and would need a manual
+`chown` before the container could write to it.
+
+**Replacing voices.** espeak-ng is robotic by design; Piper voices sound
+warmer (see `generate.sh`). Generate on a workstation, then copy over the
+files you want to replace — existing files are never regenerated:
 
 ```bash
-chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues
+scp -r cues/. <coolify-host>:/tmp/cues/
+ssh <coolify-host> 'docker cp /tmp/cues/. bot-<APP_UUID>:/app/cues/ && rm -rf /tmp/cues'
 ```
 
-then **Restart**. Until that is done the boot log says
-`cues: /app/cues is not writable by uid 1000 — skipping generation` and
-the fleet starts without cue audio (hails then fail at cue lookup).
-
-**Replacing voices.** Drop your own WAVs (48 kHz stereo; Piper voices
-sound warmer than espeak — see `generate.sh`) into the host directory
-under the same file names, or `scp -r cues/. <host>:/data/coolify/applications/<APP_UUID>/cues/`.
-Existing files win; to force regeneration of a file, delete it and
-restart. The spoken lines live at the top of `generate-cues.sh`.
+then **Restart**. To force regeneration of a file, delete it in the
+container (`rm /app/cues/en/ready.wav`) and restart. The spoken lines
+live at the top of `generate-cues.sh`.
 
 **Manual run.** Coolify → app → **Terminal** → `bot` container:
 
 ```bash
-./generate-cues.sh                                  # regenerate everything (overwrites)
+./generate-cues.sh                                       # regenerate everything (overwrites)
 SKIP_EXISTING=1 LOCALES="da-pirate" ./generate-cues.sh   # only what is missing, one locale
 ```
 
 Set `GENERATE_CUES=0` in the app's environment to disable the boot-time
 step entirely (e.g. when every cue is hand-made).
 
-Expected layout, matching the paths in `fleet.yaml`:
+Layout, matching the paths in `fleet.yaml`:
 
 ```
 cues/
@@ -133,6 +136,12 @@ default locale must load or the container will crash-loop; any other
 locale that is missing is skipped with a warning and guilds set to it
 hear the default locale's audio. Cues are encoded and cached in memory
 at boot, so a restart is needed after changing files.
+
+**Migrating from ≤ 0.2.1** (cues were a host directory): the old files
+under `/data/coolify/applications/<APP_UUID>/cues` are simply no longer
+mounted. The first boot regenerates everything with espeak; if you had
+hand-made voices there, `docker cp` them in as above and delete the
+directory when done.
 
 ### `SqliteError: unable to open database file`
 
