@@ -3,6 +3,23 @@
 All notable changes to Star Comms. Versions are semver `major.minor.patch`;
 each entry mirrors the GitHub release description on the matching tag.
 
+## 0.3.1 — 2026-08-29
+
+Patch release: panels update on deploy, and the running version is visible.
+
+### What's in this release
+
+#### Control panels re-render at boot
+- Every live vessel control panel is re-rendered once at startup, right after the boot reconciliation. A deploy that changes the panel (0.3.0 added the **Transfer** button) now updates panels posted by the previous version immediately instead of on the next click. Log line: `panels[boot]: updated=N skipped=M`.
+
+#### Version display
+- `/star-comms status` opens with the running version (`… · v0.3.1`).
+- `/healthz` gains a `version` field.
+- The boot log's first line is `star-comms v<version>`.
+
+### Upgrading from 0.3.0
+Redeploy. No configuration or data changes. Existing panels gain the Transfer button on this boot.
+
 ## 0.3.0 — 2026-08-29
 
 Ownership transfer from the control panel, rename-gated; rate-limited renames now fail fast.
