@@ -54,60 +54,75 @@ into the image at build time.
 
 ## Step 3 — Persistent storage
 
-Coolify → your app → **Persistent Storage**.
+Coolify → your app → **Persistent Storage** (Storages).
 
-The compose file declares three named volumes (`starcomms-data`,
-`starcomms-config`, `starcomms-cues`). Coolify creates them
-automatically on first deploy. The DB volume needs nothing more; the
-other two need populating.
+With the Docker Compose build pack Coolify only manages storage that is
+**declared in the compose file** — storages added through the UI on a
+compose app are not reliably attached. `docker-compose.coolify.yml`
+therefore declares everything itself:
+
+| Compose entry | What Coolify does |
+|---|---|
+| `starcomms-data:/data` | Named volume, auto-created. Holds the SQLite DB. Nothing to do. |
+| `./config/fleet.yaml:/etc/starcomms/fleet.yaml:ro` | Relative **file** bind mount → an editable file entry in Storages. |
+| `./cues:/app/cues:ro` | Relative **directory** bind mount → a real host directory. |
+
+Both relative mounts are materialised under
+`/data/coolify/applications/<APP_UUID>/` on the host after the first
+deploy attempt (the uuid is in the app's URL and in the container name,
+`bot-<APP_UUID>`).
 
 ### Config
 
-Add a **File Mount**:
+In Storages, open the `fleet.yaml` file entry and paste the contents of
+your `fleet.yaml` (built from `config/fleet.example.yaml`). Do **not**
+include the bot tokens — they live in env vars, referenced by
+`token_env:` names. Save, then **Restart**. No image rebuild required.
 
-- **Source**: paste the contents of your `fleet.yaml` (built from
-  `config/fleet.example.yaml`). Do **not** include the bot tokens — they
-  live in env vars, referenced by `token_env:` names.
-- **Destination**: `/etc/starcomms/fleet.yaml`.
-- **Read-only**.
-
-Editing the file mount in Coolify updates the container's config on
-next restart. No image rebuild required.
+If the entry is missing, Coolify has not parsed the compose file yet —
+trigger one deploy first, then come back.
 
 ### Cues
 
-Add a **Directory Mount**:
+The mount is read-only inside the container, so `docker cp` into it
+fails. Copy onto the host directory instead, matching the paths in
+`fleet.yaml`:
 
-- **Destination**: `/app/cues`.
-- After the first deploy, upload the WAV files through Coolify's file
-  browser at that path, matching the paths in `fleet.yaml`:
+```bash
+scp -r cues/. <coolify-host>:/data/coolify/applications/<APP_UUID>/cues/
+ssh <coolify-host> 'chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues'   # container runs as node (uid 1000)
+```
 
-  ```
-  cues/
-    ring.wav
-    end.wav
-    en/
-      ready.wav
-      attention.wav
-      busy.wav
-      established.wav
-      disconnected.wav
-    da/
-      klar.wav
-      giv_agt.wav
-      optaget.wav
-      ...
-  ```
+Expected layout:
 
-  Alternatively, once the container is up, `docker cp` from your
-  workstation:
+```
+cues/
+  ring.wav
+  end.wav
+  en/
+    ready.wav
+    attention.wav
+    busy.wav
+    established.wav
+    disconnected.wav
+```
 
-  ```bash
-  # find the container id in Coolify → Logs, or:
-  ssh coolify-host 'docker ps --filter name=starcomms'
-  scp -r cues/ coolify-host:/tmp/
-  ssh coolify-host 'docker cp /tmp/cues/. <container>:/app/cues/'
-  ```
+Only the `locale` / `cue_set` selected in `fleet.yaml` is loaded, so
+other locale directories are optional. Startup validates the assets and
+refuses to run if any are missing — until this step is done the
+container will crash-loop, which is expected.
+
+### Checking mounts from inside the container
+
+```bash
+# what is actually mounted
+docker inspect -f '{{range .Mounts}}{{.Type}}  {{.Source}} -> {{.Destination}}  rw={{.RW}}{{"\n"}}{{end}}' bot-<APP_UUID>
+
+# a shell with the same mounts and env, without starting the bot
+cd /data/coolify/applications/<APP_UUID>
+docker compose -p <APP_UUID> run --rm --no-deps --entrypoint bash bot
+ls -la /etc/starcomms /app/cues /data
+```
 
 ## Step 4 — Deploy
 

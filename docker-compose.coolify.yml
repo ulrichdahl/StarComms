@@ -13,15 +13,15 @@
 #      SB_TOKEN_CHARLIE
 #      Mark all four as "Is Build Variable? No" and "Is Literal? Yes"
 #      (they hold secrets — nothing to interpolate).
-#   4. Storages (Persistent Storage tab):
-#      • The three named volumes below are auto-created by Coolify.
-#      • Add a File Mount:
-#          Source: pasted content of your local config/fleet.yaml
-#                  (see config/fleet.example.yaml for the shape)
-#          Destination: /etc/starcomms/fleet.yaml
-#      • Add a Directory Mount for cue audio at /app/cues, then upload
-#        your WAVs through Coolify's file browser — or, after the first
-#        deploy, `docker cp cues/. <container>:/app/cues/`.
+#   4. Storages (Persistent Storage tab) — Coolify only manages storage
+#      that is DECLARED in this file, so nothing is added through the UI:
+#      • starcomms-data is a named volume, auto-created.
+#      • ./config/fleet.yaml is a relative bind mount. Coolify turns it into
+#        an editable file entry in the Storages tab — paste your fleet.yaml
+#        there (see config/fleet.example.yaml for the shape), save, restart.
+#      • ./cues is a relative bind mount backed by a real host directory,
+#        /data/coolify/applications/<uuid>/cues. Copy your WAVs into it
+#        over ssh/scp, then restart.
 #   5. Deploy.
 #
 # The bot exposes nothing publicly — Discord voice is outbound UDP only,
@@ -47,8 +47,12 @@ services:
       SB_TOKEN_CHARLIE:    ${SB_TOKEN_CHARLIE}
     volumes:
       - starcomms-data:/data
-      - starcomms-config:/etc/starcomms:ro
-      - starcomms-cues:/app/cues:ro
+      # Relative bind mounts: Coolify materialises these under
+      # /data/coolify/applications/<uuid>/ and exposes the file one as an
+      # editable entry in Storages. Do not replace with named volumes — an
+      # empty named volume at /etc/starcomms shadows any file mount.
+      - ./config/fleet.yaml:/etc/starcomms/fleet.yaml:ro
+      - ./cues:/app/cues:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
       interval: 30s
@@ -63,5 +67,3 @@ services:
 
 volumes:
   starcomms-data:
-  starcomms-config:
-  starcomms-cues:
