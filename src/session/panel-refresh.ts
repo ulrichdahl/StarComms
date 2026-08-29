@@ -11,6 +11,9 @@
  *     **Allow hails** enabled/disabled and the callsign hint shown or
  *     hidden; unregister also drops the vessel from the hail directory
  *     (`refreshOwnerPanels`).
+ *   - Boot — a deploy may change the panel's layout, labels or button
+ *     set, and panels posted by the previous version would otherwise
+ *     keep the old shape until touched (`refreshAllPanels`).
  *
  * The vessel row remembers `panel_message_id`; we fetch each message
  * through the controller and edit it in place with a fresh `buildPanel`.
@@ -43,6 +46,23 @@ export async function refreshGuildPanels(
     WHERE guild_id = ? AND deleted_at IS NULL AND panel_message_id IS NOT NULL
   `).all(guildId) as PanelRow[];
   return refreshPanels(db, controller, s, rows);
+}
+
+/** Every live panel in every guild — run once at boot, after reconciliation. */
+export async function refreshAllPanels(
+  db: DB, controller: Client, strings: (guildId: string) => Strings,
+): Promise<PanelRefreshResult> {
+  const guilds = db.prepare(`
+    SELECT DISTINCT guild_id FROM vessels
+    WHERE deleted_at IS NULL AND panel_message_id IS NOT NULL
+  `).all() as Array<{ guild_id: string }>;
+  const total: PanelRefreshResult = { updated: 0, skipped: 0 };
+  for (const g of guilds) {
+    const r = await refreshGuildPanels(db, controller, g.guild_id, strings(g.guild_id));
+    total.updated += r.updated;
+    total.skipped += r.skipped;
+  }
+  return total;
 }
 
 /** Live panels of vessels owned by one member in the guild. */
