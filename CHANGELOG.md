@@ -3,6 +3,20 @@
 All notable changes to Star Comms. Versions are semver `major.minor.patch`;
 each entry mirrors the GitHub release description on the matching tag.
 
+## 0.2.3 — 2026-08-29
+
+Patch release: control panels follow callsign changes immediately.
+
+### What's in this release
+
+#### Panels re-render on register / unregister
+- `/star-comms register` now re-renders the invoker's vessel control panel in place: **Allow hails** becomes enabled and the "register a callsign" hint disappears, without waiting for a button click.
+- `/star-comms unregister` does the same in reverse: the panel shows hails off with **Allow hails** (and **Hail**) disabled, matching the vessel's removal from the hail directory.
+- Implementation: `panel-refresh.ts` gains `refreshOwnerPanels` alongside the guild-wide refresh used by `set-language`; the callsign handlers fire an `onChanged` hook wired to it. Best-effort — a failed re-render is logged, never shown to the member.
+
+### Upgrading from 0.2.2
+Redeploy. No configuration or data changes.
+
 ## 0.2.2 — 2026-08-29
 
 Patch release: cue audio lives on a named volume, so a fresh deploy needs no host-side steps.

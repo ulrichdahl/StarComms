@@ -30,7 +30,7 @@ import { makeWatchChannelHandler } from './commands/watch-channel.js';
 import { makeSetLanguageHandler } from './commands/set-language.js';
 import { SUBCOMMANDS } from './commands/star-comms.js';
 import { getGuildLocale } from './session/guild-row.js';
-import { refreshGuildPanels } from './session/panel-refresh.js';
+import { refreshGuildPanels, refreshOwnerPanels } from './session/panel-refresh.js';
 import {
   makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
 } from './commands/callsigns.js';
@@ -133,6 +133,15 @@ async function main(): Promise<void> {
   // control panel in the guild; the registrar is created after the
   // handler map, hence the late binding.
   let registrar: ReturnType<typeof makeRegistrar> | null = null;
+  // A member registering or removing a callsign changes what their own
+  // vessel panels should offer (Allow hails, callsign hint, directory
+  // state) — re-render those panels in place.
+  const onCallsignChanged = async (guildId: string, userId: string): Promise<void> => {
+    const r = await refreshOwnerPanels(db, fleet.controllerClient(), guildId, userId, strings(guildId));
+    if (r.updated + r.skipped > 0) {
+      console.log(`callsigns: ${userId} in ${guildId}; panels updated=${r.updated} skipped=${r.skipped}`);
+    }
+  };
   const handlers: Record<string, SubcommandHandler> = {
     [SUBCOMMANDS.watchChannel]: makeWatchChannelHandler(config, db, strings),
     [SUBCOMMANDS.setLanguage]: makeSetLanguageHandler({
@@ -143,8 +152,8 @@ async function main(): Promise<void> {
         await registrar?.reregister(guildId);
       },
     }),
-    [SUBCOMMANDS.register]: makeRegisterHandler(db, strings),
-    [SUBCOMMANDS.unregister]: makeUnregisterHandler(db, strings),
+    [SUBCOMMANDS.register]: makeRegisterHandler(db, strings, onCallsignChanged),
+    [SUBCOMMANDS.unregister]: makeUnregisterHandler(db, strings, onCallsignChanged),
     [SUBCOMMANDS.callsign]: makeCallsignHandler(db, strings),
     [SUBCOMMANDS.status]: async (interaction) => {
       const bots = fleet.states();
