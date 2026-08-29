@@ -20,8 +20,11 @@
 #        an editable file entry in the Storages tab — paste your fleet.yaml
 #        there (see config/fleet.example.yaml for the shape), save, restart.
 #      • ./cues is a relative bind mount backed by a real host directory,
-#        /data/coolify/applications/<uuid>/cues. Copy your WAVs into it
-#        over ssh/scp, then restart.
+#        /data/coolify/applications/<uuid>/cues. On every start the
+#        container generates any cue file that is missing (espeak-ng) and
+#        never overwrites one that exists — so drop hand-made WAVs in to
+#        replace voices. Needs a one-time `chown 1000:1000` of that host
+#        directory; until then boot logs a hint and skips generation.
 #   5. Deploy.
 #
 # The bot exposes nothing publicly — Discord voice is outbound UDP only,
@@ -52,7 +55,8 @@ services:
       # editable entry in Storages. Do not replace with named volumes — an
       # empty named volume at /etc/starcomms shadows any file mount.
       - ./config/fleet.yaml:/etc/starcomms/fleet.yaml:ro
-      - ./cues:/app/cues:ro
+      # Writable so `./generate-cues.sh` can run inside the container.
+      - ./cues:/app/cues
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
       interval: 30s

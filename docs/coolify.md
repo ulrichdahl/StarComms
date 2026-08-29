@@ -84,33 +84,55 @@ trigger one deploy first, then come back.
 
 ### Cues
 
-The mount is read-only inside the container, so `docker cp` into it
-fails. Copy onto the host directory instead, matching the paths in
-`fleet.yaml`:
+The cue directory is a host directory bind-mounted at `/app/cues`.
+**On every start the container fills in whatever is missing**: the
+entrypoint runs `generate-cues.sh` in skip-existing mode (espeak-ng +
+ffmpeg are in the image), so a first deploy boots with a complete set
+for all four locales and a file that already exists is never touched.
+
+One prerequisite: Coolify creates the host directory as root and the
+container runs as `node` (uid 1000). Make it writable once:
 
 ```bash
-scp -r cues/. <coolify-host>:/data/coolify/applications/<APP_UUID>/cues/
-ssh <coolify-host> 'chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues'   # container runs as node (uid 1000)
+chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues
 ```
 
-Expected layout:
+then **Restart**. Until that is done the boot log says
+`cues: /app/cues is not writable by uid 1000 — skipping generation` and
+the fleet starts without cue audio (hails then fail at cue lookup).
+
+**Replacing voices.** Drop your own WAVs (48 kHz stereo; Piper voices
+sound warmer than espeak — see `generate.sh`) into the host directory
+under the same file names, or `scp -r cues/. <host>:/data/coolify/applications/<APP_UUID>/cues/`.
+Existing files win; to force regeneration of a file, delete it and
+restart. The spoken lines live at the top of `generate-cues.sh`.
+
+**Manual run.** Coolify → app → **Terminal** → `bot` container:
+
+```bash
+./generate-cues.sh                                  # regenerate everything (overwrites)
+SKIP_EXISTING=1 LOCALES="da-pirate" ./generate-cues.sh   # only what is missing, one locale
+```
+
+Set `GENERATE_CUES=0` in the app's environment to disable the boot-time
+step entirely (e.g. when every cue is hand-made).
+
+Expected layout, matching the paths in `fleet.yaml`:
 
 ```
 cues/
-  ring.wav
-  end.wav
-  en/
-    ready.wav
-    attention.wav
-    busy.wav
-    established.wav
-    disconnected.wav
+  ring.wav  end.wav
+  en/        ready attention busy established disconnected  .wav
+  da/        klar  giv_agt   optaget etableret afbrudt      .wav
+  en-pirate/ same names as en
+  da-pirate/ same names as da
 ```
 
-Only the `locale` / `cue_set` selected in `fleet.yaml` is loaded, so
-other locale directories are optional. Startup validates the assets and
-refuses to run if any are missing — until this step is done the
-container will crash-loop, which is expected.
+Only locales declared under `cue_sets` in `fleet.yaml` are loaded. The
+default locale must load or the container will crash-loop; any other
+locale that is missing is skipped with a warning and guilds set to it
+hear the default locale's audio. Cues are encoded and cached in memory
+at boot, so a restart is needed after changing files.
 
 ### `SqliteError: unable to open database file`
 

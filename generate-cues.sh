@@ -11,6 +11,9 @@
 #
 # Usage:  ./generate-cues.sh [cues-dir]        (default: ./cues)
 #         LOCALES="en da" ./generate-cues.sh   (subset)
+#         SKIP_EXISTING=1 ./generate-cues.sh   (only write files that are
+#           missing — the container entrypoint uses this at boot, so
+#           hand-made WAVs dropped into the directory are never touched)
 #
 # espeak-ng is robotic by design — it suits a ship's computer. Swap `say`
 # for Piper (see generate.sh) if you want a warmer voice; keep the file
@@ -20,6 +23,14 @@ set -euo pipefail
 
 CUES_ROOT="${1:-$(pwd)/cues}"
 LOCALES="${LOCALES:-en da en-pirate da-pirate}"
+SKIP_EXISTING="${SKIP_EXISTING:-0}"
+written=0; kept=0
+
+# keep <out.wav> — true when the file exists and we are in skip mode.
+keep() {
+  [ "$SKIP_EXISTING" = "1" ] && [ -s "$1" ] && { kept=$((kept+1)); return 0; }
+  return 1
+}
 
 for tool in espeak-ng ffmpeg; do
   command -v "$tool" >/dev/null 2>&1 || { echo "$tool not found" >&2; exit 1; }
@@ -28,6 +39,8 @@ done
 # say <text> <espeak voice> <out.wav>
 say() {
   local text="$1" voice="$2" out="$3"
+  keep "$out" && return 0
+  written=$((written+1))
   espeak-ng -v "$voice" -s 150 --stdout "$text" \
     | ffmpeg -y -loglevel error -i pipe:0 -af "adelay=200|200" -ar 48000 -ac 2 "$out"
   echo "wrote $out"
@@ -74,15 +87,22 @@ for l in $LOCALES; do gen_locale "$l"; done
 # Ring — two-tone rising chime, locale-neutral. `end` is the same chime
 # reversed so open and close are mirror images.
 mkdir -p "$CUES_ROOT"
-ffmpeg -y -loglevel error \
-  -f lavfi -i "sine=frequency=784:duration=0.15" \
-  -f lavfi -i "sine=frequency=1047:duration=0.20" \
-  -filter_complex "[0][1]concat=n=2:v=0:a=1,volume=0.5,adelay=200|200" \
-  -ar 48000 -ac 2 "$CUES_ROOT/ring.wav"
-echo "wrote $CUES_ROOT/ring.wav"
-ffmpeg -y -loglevel error \
-  -f lavfi -i "sine=frequency=1047:duration=0.20" \
-  -f lavfi -i "sine=frequency=784:duration=0.15" \
-  -filter_complex "[0][1]concat=n=2:v=0:a=1,volume=0.5,adelay=200|200" \
-  -ar 48000 -ac 2 "$CUES_ROOT/end.wav"
-echo "wrote $CUES_ROOT/end.wav"
+if ! keep "$CUES_ROOT/ring.wav"; then
+  written=$((written+1))
+  ffmpeg -y -loglevel error \
+    -f lavfi -i "sine=frequency=784:duration=0.15" \
+    -f lavfi -i "sine=frequency=1047:duration=0.20" \
+    -filter_complex "[0][1]concat=n=2:v=0:a=1,volume=0.5,adelay=200|200" \
+    -ar 48000 -ac 2 "$CUES_ROOT/ring.wav"
+  echo "wrote $CUES_ROOT/ring.wav"
+fi
+if ! keep "$CUES_ROOT/end.wav"; then
+  written=$((written+1))
+  ffmpeg -y -loglevel error \
+    -f lavfi -i "sine=frequency=1047:duration=0.20" \
+    -f lavfi -i "sine=frequency=784:duration=0.15" \
+    -filter_complex "[0][1]concat=n=2:v=0:a=1,volume=0.5,adelay=200|200" \
+    -ar 48000 -ac 2 "$CUES_ROOT/end.wav"
+  echo "wrote $CUES_ROOT/end.wav"
+fi
+echo "cues: $written written, $kept kept (existing) in $CUES_ROOT"
