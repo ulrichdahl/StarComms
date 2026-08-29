@@ -3,10 +3,17 @@
 All notable changes to Star Comms. Versions are semver `major.minor.patch`;
 each entry mirrors the GitHub release description on the matching tag.
 
-## Unreleased
+## 0.3.2 — 2026-08-29
 
-### Changed
+Patch release: transfer notices name only the new owner.
+
+### What's in this release
+
+#### Ownership-transfer notice
 - The channel notice posted after an ownership transfer (manual **Transfer** button or automatic hand-over when the owner leaves) names only the new owner. It no longer mentions the previous owner, in every locale.
+
+### Upgrading from 0.3.1
+- No schema or config changes. Redeploy.
 
 ## 0.3.1 — 2026-08-29
 
