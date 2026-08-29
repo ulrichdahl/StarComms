@@ -98,6 +98,19 @@ the previous product's design.
   is per locale too; a missing locale falls back to the default
   locale's audio, never to silence or a crash.
 
+## Git workflow — production is live
+
+- **Never commit to `main` directly.** All work happens on `develop` or
+  on a feature branch cut from `develop` and merged back into it.
+- `main` is what Coolify deploys. It only moves by merging `develop`.
+- **Release procedure:** when `develop` is deemed stable, make one final
+  commit on `develop` with the version bump (`package.json`) and any
+  release housekeeping (docs, changelog). Merge `develop` → `main`,
+  then tag `main` with the version (`vX.Y.Z`) and create a GitHub
+  release on that tag whose description lists what went into it.
+- Tagging and publishing a release is outward-facing — do it only when
+  asked to ship.
+
 ## Build order
 
 Spec §15. Step 1 is the current clean-up pass — legacy modules removed,
