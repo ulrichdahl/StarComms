@@ -30,7 +30,7 @@ import { makeWatchChannelHandler } from './commands/watch-channel.js';
 import { makeSetLanguageHandler } from './commands/set-language.js';
 import { SUBCOMMANDS } from './commands/star-comms.js';
 import { getGuildLocale } from './session/guild-row.js';
-import { refreshGuildPanels, refreshOwnerPanels } from './session/panel-refresh.js';
+import { refreshAllPanels, refreshGuildPanels, refreshOwnerPanels } from './session/panel-refresh.js';
 import {
   makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
 } from './commands/callsigns.js';
@@ -115,6 +115,16 @@ async function main(): Promise<void> {
     }
   };
   await reconcileOnce('boot');
+
+  // Re-render every live control panel so panels posted by the previous
+  // version pick up this version's layout, labels and button set on
+  // deploy rather than on the next click.
+  try {
+    const r = await refreshAllPanels(db, fleet.controllerClient(), strings);
+    console.log(`panels[boot]: updated=${r.updated} skipped=${r.skipped}`);
+  } catch (err) {
+    console.warn(`panels[boot]: refresh failed — ${err instanceof Error ? err.message : String(err)}`);
+  }
   const reconcileInterval = setInterval(() => { void reconcileOnce('periodic'); }, 5 * 60_000);
 
   // Reconcile after a shard resume/reconnect. Delay by 3 s so
