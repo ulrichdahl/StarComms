@@ -21,6 +21,7 @@
  */
 
 import { Client, Events, GatewayIntentBits, Status } from 'discord.js';
+import { rejectChannelPatchRateLimit } from '../lib/rate-limit.js';
 import type { ControllerConfig, FleetMember } from '../lib/config.js';
 
 export interface BotState {
@@ -85,7 +86,12 @@ export class Fleet {
   }
 
   private makeEntry(spec: { nato: string; role: 'controller' | 'squad'; applicationId: string; token: string }): BotEntry {
-    const client = new Client({ intents: [...INTENTS] });
+    // Channel-name PATCH 429s must throw, not queue for 10 min — the
+    // rename-gated transfer and the panel's rename paths depend on it.
+    const client = new Client({
+      intents: [...INTENTS],
+      rest: { rejectOnRateLimit: rejectChannelPatchRateLimit },
+    });
     const state: BotState = {
       nato: spec.nato,
       role: spec.role,

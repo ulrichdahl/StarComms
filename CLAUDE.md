@@ -89,6 +89,14 @@ the previous product's design.
 - **Channel rename PATCH is limited to ~2 per 10 min per channel.**
   User-driven renames are best-effort — surface Discord's 429 back to
   the operator ("try again in ~10 minutes") rather than queuing.
+- **`@discordjs/rest` queues 429s by default** — a rate-limited rename
+  silently *waits up to 10 minutes* instead of throwing, so no "abort
+  on rate limit" logic can work under the default. The fleet's Clients
+  set `rest.rejectOnRateLimit` to `rejectChannelPatchRateLimit`
+  (`src/lib/rate-limit.ts`), which rejects `PATCH /channels/:id` only.
+  Never remove it, and detect the result with `isRateLimitError`, not
+  by message matching. Ownership transfer is gated on the rename
+  succeeding for exactly this reason.
 - **Language is per guild, never per user.** Discord renders a bot's
   buttons and channel posts identically for every member, so
   `guilds.locale` is the only unit of localisation. No user-facing

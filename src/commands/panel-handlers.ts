@@ -36,6 +36,8 @@ import type { HailManager } from '../session/hail.js';
 import type { Strings } from '../lib/i18n.js';
 import { PANEL_IDS, buildPanel } from './panel.js';
 import { renderCallsignError } from './callsigns.js';
+import { isRateLimitError } from '../lib/rate-limit.js';
+import { transferOwnership } from '../session/vessel.js';
 
 export interface PanelDeps {
   db: DB;
@@ -76,6 +78,8 @@ export function makePanelDispatcher(deps: PanelDeps) {
         case PANEL_IDS.limitSubmit: return await handleLimitSubmit(deps, interaction as ModalSubmitInteraction);
         case PANEL_IDS.kick: return await handleKickClick(deps, interaction as ButtonInteraction);
         case PANEL_IDS.kickPick: return await handleKickPick(deps, interaction as UserSelectMenuInteraction);
+        case PANEL_IDS.transfer: return await handleTransferClick(deps, interaction as ButtonInteraction);
+        case PANEL_IDS.transferPick: return await handleTransferPick(deps, interaction as StringSelectMenuInteraction);
         case PANEL_IDS.hailsToggle: return await handleHailsToggle(deps, interaction as ButtonInteraction);
         case PANEL_IDS.hail: return await handleHailClick(deps, interaction as ButtonInteraction);
         case PANEL_IDS.hailPick: return await handleHailPick(deps, interaction as StringSelectMenuInteraction);
@@ -124,13 +128,6 @@ function stripPrefix(name: string): { prefix: string; text: string } {
     return { prefix: PREFIX_UNREGISTERED, text: trimmed.slice(PREFIX_UNREGISTERED.length).trim() };
   }
   return { prefix: PREFIX_UNREGISTERED, text: trimmed };
-}
-
-function isDiscordRateLimit(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: unknown }).code;
-  if (code === 429) return true;
-  return /rate/i.test(err.message);
 }
 
 function errMsg(err: unknown): string {
@@ -279,7 +276,7 @@ async function handleRenameSubmit(deps: PanelDeps, interaction: ModalSubmitInter
   try {
     await channel.setName(newName, 'Star Comms: rename via panel');
   } catch (err) {
-    if (isDiscordRateLimit(err)) {
+    if (isRateLimitError(err)) {
       await interaction.reply({ content: s.panelHandlers.renameRateLimited, flags: MessageFlags.Ephemeral });
       return;
     }
@@ -433,6 +430,99 @@ async function handleKickPick(deps: PanelDeps, interaction: UserSelectMenuIntera
 }
 
 // ---------------------------------------------------------------------------
+// transfer ownership
+// ---------------------------------------------------------------------------
+
+/** Humans currently in the vessel other than the owner — the transfer candidates. */
+async function transferCandidates(
+  interaction: MessageComponentInteraction, state: VesselState,
+) {
+  const channel = await interaction.guild!.channels.fetch(state.channelId).catch(() => null);
+  if (channel === null || channel.type !== ChannelType.GuildVoice) return null;
+  return {
+    channel,
+    members: channel.members.filter((m) => !m.user.bot && m.id !== state.ownerUserId),
+  };
+}
+
+async function handleTransferClick(deps: PanelDeps, interaction: ButtonInteraction): Promise<void> {
+  const state = await requireOwner(deps, interaction);
+  if (state === null) return;
+  const s = deps.strings(state.guildId);
+
+  // A hail leg is bound to the owner's voice; hand-over mid-hail would
+  // leave the relay following the wrong person. End it first.
+  if (deps.hails.isChannelInHail(state.guildId, state.channelId)) {
+    await interaction.reply({ content: s.panelHandlers.transferInHail, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const found = await transferCandidates(interaction, state);
+  if (found === null) return;
+  if (found.members.size === 0) {
+    await interaction.reply({ content: s.panelHandlers.transferNobody, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(PANEL_IDS.transferPick)
+    .setPlaceholder(s.panelHandlers.transferPlaceholder)
+    .setMinValues(1)
+    .setMaxValues(1);
+  for (const m of found.members.first(25)) {
+    menu.addOptions({
+      label: m.displayName.slice(0, 100),
+      value: m.id,
+      description: m.user.username.slice(0, 100),
+    });
+  }
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+  await interaction.reply({
+    content: s.panelHandlers.transferIntro,
+    components: [row],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleTransferPick(
+  deps: PanelDeps, interaction: StringSelectMenuInteraction,
+): Promise<void> {
+  const state = await requireOwner(deps, interaction);
+  if (state === null) return;
+  const s = deps.strings(state.guildId);
+  const targetId = interaction.values[0];
+  if (targetId === undefined) return;
+
+  if (deps.hails.isChannelInHail(state.guildId, state.channelId)) {
+    await interaction.update({ content: s.panelHandlers.transferInHail, components: [] });
+    return;
+  }
+
+  const found = await transferCandidates(interaction, state);
+  if (found === null) return;
+  const target = found.members.get(targetId);
+  if (target === undefined) {
+    await interaction.update({ content: s.panelHandlers.transferTargetGone, components: [] });
+    return;
+  }
+
+  // The rename PATCH is the gate and may take a moment; acknowledge
+  // first so the 3 s interaction window cannot expire mid-transfer.
+  await interaction.deferUpdate();
+  const result = await transferOwnership(
+    deps, found.channel, state.ownerUserId, target,
+    s.vessel.handedOver(state.ownerUserId, target.toString()),
+    'Star Comms: transfer via panel',
+  );
+  const content = result === 'ok'
+    ? s.panelHandlers.transferDone(target.toString())
+    : result === 'rate_limited'
+      ? s.panelHandlers.transferRateLimited
+      : s.panelHandlers.transferRenameFailed;
+  await interaction.editReply({ content, components: [] });
+}
+
+// ---------------------------------------------------------------------------
 // allow hails / disable hails
 // ---------------------------------------------------------------------------
 
@@ -501,7 +591,7 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
   await interaction.update({ content: rendered.content, components: rendered.components });
 
   if (!renameOk) {
-    const detail = isDiscordRateLimit(renameErr)
+    const detail = isRateLimitError(renameErr)
       ? s.panelHandlers.renameLimitDetail
       : s.panelHandlers.renameManualDetail;
     await interaction.followUp({

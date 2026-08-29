@@ -3,6 +3,29 @@
 All notable changes to Star Comms. Versions are semver `major.minor.patch`;
 each entry mirrors the GitHub release description on the matching tag.
 
+## 0.3.0 — 2026-08-29
+
+Ownership transfer from the control panel, rename-gated; rate-limited renames now fail fast.
+
+### What's in this release
+
+#### Transfer button
+- New **Transfer** (👑) button on row 1 of the vessel control panel, owner-only. It opens a select of the humans currently in the voice channel (excluding the owner); picking one hands the vessel over: the channel is renamed `🔊 <new owner>`, the vessel leaves the hail directory (the callsign belonged to the old owner, so hails are off), the panel is re-rendered in place and a notice is posted in the channel.
+- Refused while the vessel is in an active hail — a hail leg follows the owner's voice.
+- Strings in all four locales.
+
+#### Rename-gated transfer, shared by the manual and automatic paths
+- The existing owner-left auto-transfer (30 s grace window) and the new button use one routine. It renames the channel **first** and does nothing else unless that succeeds; a rate-limited or failed rename leaves the database untouched.
+- Manual: the owner is told the rename limit is reached and to try again in ~10 minutes.
+- Automatic: retries every 60 s, up to 15 times, while the owner is still absent and the channel still populated. An owner rejoin or the channel emptying cancels the retries.
+
+#### Fix: rate-limited renames now fail fast instead of hanging
+- `@discordjs/rest` defaults to *queueing* 429s, so a rate-limited channel rename silently waited up to 10 minutes and none of the existing "rename limit reached — try again in ~10 minutes" replies could ever fire. The fleet's Clients now reject rate limits on `PATCH /channels/:id` only (`src/lib/rate-limit.ts`); every other route keeps the default. All rename paths detect the result with `isRateLimitError`.
+- Recorded as a hard constraint in `CLAUDE.md` and in the spec (§3, §4; the §16 "ownership transfer" future-work row is marked shipped).
+
+### Upgrading from 0.2.3
+Redeploy. No configuration or data changes. Existing panels gain the Transfer button the next time they are re-rendered (any click, a language change, or a register/unregister).
+
 ## 0.2.3 — 2026-08-29
 
 Patch release: control panels follow callsign changes immediately.
