@@ -63,7 +63,7 @@ therefore declares everything itself:
 
 | Compose entry | What Coolify does |
 |---|---|
-| `starcomms-data:/data` | Named volume, auto-created. Holds the SQLite DB. Nothing to do. |
+| `starcomms-data:/data` | Named volume, auto-created. Holds the SQLite DB. Nothing to do — the image ships `/data` owned by `node`, and Docker copies that ownership onto the empty volume on first mount. |
 | `./config/fleet.yaml:/etc/starcomms/fleet.yaml:ro` | Relative **file** bind mount → an editable file entry in Storages. |
 | `./cues:/app/cues:ro` | Relative **directory** bind mount → a real host directory. |
 
@@ -111,6 +111,22 @@ Only the `locale` / `cue_set` selected in `fleet.yaml` is loaded, so
 other locale directories are optional. Startup validates the assets and
 refuses to run if any are missing — until this step is done the
 container will crash-loop, which is expected.
+
+### `SqliteError: unable to open database file`
+
+The process runs as `node` (uid 1000) and cannot write to `/data`.
+Happens if the volume was created by an image older than the `/data`
+ownership fix, or if Coolify materialised it as a host directory rather
+than a named volume. Fix the ownership once, from the host:
+
+```bash
+# named volume
+docker run --rm -v <APP_UUID>_starcomms-data:/data busybox chown 1000:1000 /data
+# or, if it is a bind directory
+chown 1000:1000 /data/coolify/applications/<APP_UUID>/data
+```
+
+`docker inspect … .Mounts` (below) tells you which of the two you have.
 
 ### Checking mounts from inside the container
 

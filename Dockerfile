@@ -27,6 +27,12 @@ FROM base AS runtime
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+# The SQLite volume mounts at /data. Create it owned by `node` here: Docker
+# copies the image directory's ownership onto an empty named volume on first
+# mount, so the unprivileged process can create starcomms.db. Without this
+# the mount point is root:root 755 and startup dies with
+# "SqliteError: unable to open database file".
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3000
 CMD ["node", "dist/index.js"]
