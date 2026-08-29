@@ -3,7 +3,7 @@
  *
  * Two rows, per Spec 1.0 §4:
  *
- *   [ Rename ] [ Lock/Unlock ] [ Limit ] [ Kick ]
+ *   [ Rename ] [ Lock/Unlock ] [ Limit ] [ Kick ] [ Transfer ]
  *   [ Allow hails / Disable hails ] [ Hail ]
  *
  * Toggle buttons swap label + colour based on the current vessel state.
@@ -28,6 +28,8 @@ export const PANEL_IDS = {
   limitSubmit: 'sc:panel:limit:submit',
   kick: 'sc:panel:kick',
   kickPick: 'sc:panel:kick:pick',
+  transfer: 'sc:panel:transfer',
+  transferPick: 'sc:panel:transfer:pick',
   hailsToggle: 'sc:panel:hails',
   hail: 'sc:panel:hail',
   hailPick: 'sc:panel:hail:pick',
@@ -78,6 +80,12 @@ export function buildPanel(state: VesselState, s: Strings): PanelRender {
     .setEmoji('🥾')
     .setLabel(p.btnKick)
     .setStyle(ButtonStyle.Danger);
+  const transfer = new ButtonBuilder()
+    .setCustomId(PANEL_IDS.transfer)
+    // Crown — "who owns this". Secondary: deliberate, not destructive.
+    .setEmoji('👑')
+    .setLabel(p.btnTransfer)
+    .setStyle(ButtonStyle.Secondary);
 
   // ── row 2: hail controls ──────────────────────────────────────
   const hailsToggle = new ButtonBuilder()
@@ -102,7 +110,7 @@ export function buildPanel(state: VesselState, s: Strings): PanelRender {
     // there is nothing to identify the caller with in the target's ring.
     .setDisabled(!state.hailsEnabled);
 
-  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(rename, lockToggle, limit, kick);
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(rename, lockToggle, limit, kick, transfer);
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(hailsToggle, hail);
 
   const callsignNote = state.callsign === null ? p.callsignNote : '';

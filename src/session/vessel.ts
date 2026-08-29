@@ -33,8 +33,13 @@ import { buildPanel } from '../commands/panel.js';
 import { getVesselState } from './vessel-state.js';
 import type { HailManager } from './hail.js';
 import type { Strings } from '../lib/i18n.js';
+import { isRateLimitError } from '../lib/rate-limit.js';
 
 const CLEANUP_DELAY_MS = 30_000;
+/** Auto-transfer blocked by the rename rate limit retries at this cadence… */
+const TRANSFER_RETRY_MS = 60_000;
+/** …up to this many times (the rename bucket resets within ~10 min). */
+const TRANSFER_MAX_RETRIES = 15;
 
 interface VesselServiceConfig {
   fleet: Fleet;
@@ -418,25 +423,37 @@ async function onChannelLeave(
   }
 }
 
+/**
+ * Schedule the owner-absent check. First call after the 30 s grace
+ * window; when the transfer is blocked by the rename rate limit it is
+ * re-scheduled every minute (`attempt` counts up) until the rename
+ * goes through, the owner returns, the channel empties, or the retry
+ * budget runs out. Shares `pendingTransfers` with the leave/join
+ * handlers so an owner rejoin cancels retries too.
+ */
 function scheduleTransfer(
   cfg: VesselServiceConfig,
   channelId: string,
   pendingTransfers: Map<string, NodeJS.Timeout>,
+  delayMs: number = CLEANUP_DELAY_MS,
+  attempt = 0,
 ): void {
   const existing = pendingTransfers.get(channelId);
   if (existing !== undefined) clearTimeout(existing);
   const timer = setTimeout(() => {
     pendingTransfers.delete(channelId);
-    void transferIfOwnerStillAbsent(cfg, channelId).catch((err) => {
+    void transferIfOwnerStillAbsent(cfg, channelId, pendingTransfers, attempt).catch((err) => {
       console.error(`vessel: transfer check failed for ${channelId}: ${errMsg(err)}`);
     });
-  }, CLEANUP_DELAY_MS);
+  }, delayMs);
   pendingTransfers.set(channelId, timer);
 }
 
 async function transferIfOwnerStillAbsent(
   cfg: VesselServiceConfig,
   channelId: string,
+  pendingTransfers: Map<string, NodeJS.Timeout>,
+  attempt: number,
 ): Promise<void> {
   const vessel = cfg.db.prepare(`
     SELECT id, guild_id, channel_id, owner_user_id
@@ -457,30 +474,67 @@ async function transferIfOwnerStillAbsent(
   }
   const successor = humans.first();
   if (successor === undefined) return;
-  await transferOwnership(cfg, channel, vessel.owner_user_id, successor).catch((err) => {
-    console.error(`vessel: ownership transfer failed on ${channelId}: ${errMsg(err)}`);
-  });
+
+  const notice = cfg.strings(channel.guildId).vessel.transferred(vessel.owner_user_id, successor.toString());
+  const result = await transferOwnership(
+    cfg, channel, vessel.owner_user_id, successor, notice, 'Star Comms: ownership transfer (owner left)',
+  );
+  if (result === 'rate_limited') {
+    if (attempt >= TRANSFER_MAX_RETRIES) {
+      console.error(`vessel: auto-transfer of ${channelId} gave up after ${attempt} rate-limited attempts`);
+      return;
+    }
+    console.warn(`vessel: auto-transfer of ${channelId} blocked by rename rate limit; retry ${attempt + 1} in ${TRANSFER_RETRY_MS / 1000}s`);
+    scheduleTransfer(cfg, channelId, pendingTransfers, TRANSFER_RETRY_MS, attempt + 1);
+  }
 }
 
-async function transferOwnership(
-  cfg: VesselServiceConfig,
+export type TransferResult = 'ok' | 'rate_limited' | 'rename_failed';
+
+/** What a transfer needs — a subset of the service config so the panel handler can call it too. */
+export interface TransferDeps {
+  db: DB;
+  strings: (guildId: string) => Strings;
+}
+
+/**
+ * Hand a vessel to `successor` — gated on the channel rename.
+ *
+ * The rename to `🔊 <new owner display name>` runs FIRST and nothing
+ * else happens unless it succeeds: a transfer whose channel still
+ * carries the old owner's name (or callsign) is confusing, and the
+ * rename is the one step that can be refused (Discord's ~2-per-10-min
+ * name bucket). On `rate_limited` / `rename_failed` the DB is untouched
+ * and the caller decides — the panel reports it, the auto path retries.
+ *
+ * On success: owner row updated, hail_registry row dropped (the
+ * callsign belonged to the old owner), panel re-rendered in place, and
+ * `notice` posted in the channel.
+ */
+export async function transferOwnership(
+  cfg: TransferDeps,
   channel: VoiceBasedChannel,
   oldOwnerUserId: string,
   successor: GuildMember,
-): Promise<void> {
+  notice: string,
+  reason: string,
+): Promise<TransferResult> {
+  const newName = `🔊 ${successor.displayName}`.slice(0, 100);
+  try {
+    await channel.setName(newName, reason);
+  } catch (err) {
+    if (isRateLimitError(err)) {
+      console.warn(`vessel: transfer of ${channel.id} refused — rename rate-limited`);
+      return 'rate_limited';
+    }
+    console.error(`vessel: transfer of ${channel.id} refused — rename failed: ${errMsg(err)}`);
+    return 'rename_failed';
+  }
+
   cfg.db.prepare(
     `UPDATE vessels SET owner_user_id = ? WHERE channel_id = ? AND deleted_at IS NULL`,
   ).run(successor.id, channel.id);
   cfg.db.prepare(`DELETE FROM hail_registry WHERE channel_id = ?`).run(channel.id);
-
-  // Best-effort rename to `🔊 <new owner display name>`. Discord's
-  // ~2/10 min rename bucket may reject this; log the failure and move
-  // on. The DB state is authoritative — the visual will follow the
-  // next time the rename bucket has capacity, or on the next click.
-  const newName = `🔊 ${successor.displayName}`.slice(0, 100);
-  await channel.setName(newName, 'Star Comms: ownership transfer').catch((err) => {
-    console.warn(`vessel: rename on ownership transfer 429/failed: ${errMsg(err)}`);
-  });
 
   // Re-render the control panel so buttons + owner mention + hails
   // state reflect the transfer. We do NOT have an interaction here to
@@ -505,15 +559,12 @@ async function transferOwnership(
     }
   }
 
-  await channel.send({
-    content: cfg.strings(channel.guildId).vessel.transferred(oldOwnerUserId, successor.toString()),
-  }).catch((err) => {
+  await channel.send({ content: notice }).catch((err) => {
     console.error(`vessel: transfer notice post failed: ${errMsg(err)}`);
   });
 
-  console.log(
-    `vessel: transferred ${channel.id} from ${oldOwnerUserId} → ${successor.id}`,
-  );
+  console.log(`vessel: transferred ${channel.id} from ${oldOwnerUserId} → ${successor.id}`);
+  return 'ok';
 }
 
 function scheduleCleanup(

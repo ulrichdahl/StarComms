@@ -86,6 +86,7 @@ export interface Strings {
     btnAllowHails: string;
     btnDisableHails: string;
     btnHail: string;
+    btnTransfer: string;
   };
   panelHandlers: {
     stale: string;
@@ -121,6 +122,14 @@ export interface Strings {
     opening(count: number): string;
     hailOpen(silenceSeconds: number): string;
     hailError(reason: string): string;
+    transferIntro: string;
+    transferPlaceholder: string;
+    transferNobody: string;
+    transferInHail: string;
+    transferTargetGone: string;
+    transferDone(newOwnerMention: string): string;
+    transferRateLimited: string;
+    transferRenameFailed: string;
   };
   hail: {
     btnEnd: string;
@@ -134,6 +143,8 @@ export interface Strings {
   vessel: {
     cannotMoveNotice: string;
     transferred(oldOwnerUserId: string, successorMention: string): string;
+    /** Owner used the Transfer button. */
+    handedOver(oldOwnerUserId: string, successorMention: string): string;
   };
 }
 
@@ -225,6 +236,7 @@ const en: Strings = {
     btnAllowHails: 'Allow hails',
     btnDisableHails: 'Disable hails',
     btnHail: 'Hail',
+    btnTransfer: 'Transfer',
   },
   panelHandlers: {
     stale: 'This panel is stale — the vessel is no longer tracked.',
@@ -273,6 +285,14 @@ const en: Strings = {
         default: return `Hail could not open: ${reason}`;
       }
     },
+    transferIntro: 'Pick the member who takes over this channel. It is renamed after them, hails are disabled, and only they can use these controls afterwards.',
+    transferPlaceholder: 'Pick the new owner',
+    transferNobody: 'Nobody else is in this channel to hand over to.',
+    transferInHail: 'This channel is in an active hail. End it before transferring ownership.',
+    transferTargetGone: 'That member is no longer in this channel.',
+    transferDone: (m) => `Ownership transferred to ${m}.`,
+    transferRateLimited: 'Discord\'s rename limit for this channel is reached, so the transfer was not made. Try again in ~10 minutes.',
+    transferRenameFailed: 'The channel could not be renamed, so the transfer was not made. Check the bot\'s permissions on this channel.',
   },
   hail: {
     btnEnd: 'End hail',
@@ -288,6 +308,7 @@ const en: Strings = {
       '\n_Discord blocks the bot from moving you (most often because you are the server owner). ' +
       'Join this channel manually to activate it._',
     transferred: (old, succ) => `⚓ <@${old}> left. Ownership passed to ${succ}. Hails disabled.`,
+    handedOver: (old, succ) => `⚓ <@${old}> handed the channel over to ${succ}. Hails disabled.`,
   },
 };
 
@@ -365,6 +386,7 @@ const da: Strings = {
     btnAllowHails: 'Tillad kald',
     btnDisableHails: 'Slå kald fra',
     btnHail: 'Kald',
+    btnTransfer: 'Overdrag',
   },
   panelHandlers: {
     stale: 'Dette panel er forældet — fartøjet spores ikke længere.',
@@ -413,6 +435,14 @@ const da: Strings = {
         default: return `Kaldet kunne ikke åbnes: ${reason}`;
       }
     },
+    transferIntro: 'Vælg det medlem, der skal overtage kanalen. Den omdøbes efter dem, kald slås fra, og kun de kan bruge disse knapper bagefter.',
+    transferPlaceholder: 'Vælg den nye ejer',
+    transferNobody: 'Der er ingen andre i kanalen at overdrage til.',
+    transferInHail: 'Kanalen er i et aktivt kald. Afslut det, før du overdrager ejerskabet.',
+    transferTargetGone: 'Det medlem er ikke længere i kanalen.',
+    transferDone: (m) => `Ejerskabet er overdraget til ${m}.`,
+    transferRateLimited: 'Discords grænse for omdøbning af denne kanal er nået, så overdragelsen blev ikke gennemført. Prøv igen om ca. 10 minutter.',
+    transferRenameFailed: 'Kanalen kunne ikke omdøbes, så overdragelsen blev ikke gennemført. Tjek bottens rettigheder på kanalen.',
   },
   hail: {
     btnEnd: 'Afslut kald',
@@ -428,6 +458,7 @@ const da: Strings = {
       '\n_Discord tillader ikke botten at flytte dig (oftest fordi du er serverejer). ' +
       'Join denne kanal manuelt for at aktivere den._',
     transferred: (old, succ) => `⚓ <@${old}> forlod kanalen. Ejerskabet er overdraget til ${succ}. Kald slået fra.`,
+    handedOver: (old, succ) => `⚓ <@${old}> overdrog kanalen til ${succ}. Kald slået fra.`,
   },
 };
 
@@ -505,6 +536,7 @@ const enPirate: Strings = {
     btnAllowHails: 'Allow hails',
     btnDisableHails: 'Disable hails',
     btnHail: 'Hail',
+    btnTransfer: 'Hand over',
   },
   panelHandlers: {
     stale: 'This panel be stale — the vessel be no longer on our charts.',
@@ -553,6 +585,14 @@ const enPirate: Strings = {
         default: return `Hail could not open: ${reason}`;
       }
     },
+    transferIntro: 'Pick the crewmate who takes the helm. The vessel be renamed after them, hails go quiet, and only they can touch the helm after.',
+    transferPlaceholder: 'Pick the new cap\'n',
+    transferNobody: 'No other soul aboard to hand the helm to.',
+    transferInHail: 'This vessel be in a hail. End it before handin\' over the helm.',
+    transferTargetGone: 'That crewmate be no longer aboard.',
+    transferDone: (m) => `The helm now belongs to ${m}, arr!`,
+    transferRateLimited: 'Discord\'s rename limit fer this channel be reached, so the helm stays put. Try again in ~10 minutes.',
+    transferRenameFailed: 'The vessel could not be renamed, so the helm stays put. Check the bot\'s permissions on this channel.',
   },
   hail: {
     btnEnd: 'End hail',
@@ -568,6 +608,7 @@ const enPirate: Strings = {
       '\n_Discord won\'t let the bot haul ye aboard (most often because ye own the ship). ' +
       'Board this channel yerself to raise the colours._',
     transferred: (old, succ) => `⚓ <@${old}> abandoned ship. ${succ} be the new cap\'n. Hails disabled.`,
+    handedOver: (old, succ) => `⚓ <@${old}> handed the helm to ${succ}. Hails disabled.`,
   },
 };
 
@@ -645,6 +686,7 @@ const daPirate: Strings = {
     btnAllowHails: 'Tillad kald',
     btnDisableHails: 'Slå kald fra',
     btnHail: 'Kald',
+    btnTransfer: 'Giv roret',
   },
   panelHandlers: {
     stale: 'Dette panel er forældet — fartøjet er ikke længere på vores søkort.',
@@ -693,6 +735,14 @@ const daPirate: Strings = {
         default: return `Kaldet kunne ikke åbnes: ${reason}`;
       }
     },
+    transferIntro: 'Vælg den skibskammerat, der skal tage roret. Fartøjet omdøbes efter dem, kald slås fra, og kun de må røre roret bagefter.',
+    transferPlaceholder: 'Vælg den nye kaptajn',
+    transferNobody: 'Der er ingen andre om bord at give roret til.',
+    transferInHail: 'Fartøjet er i et kald. Afslut det, før du giver roret fra dig.',
+    transferTargetGone: 'Den skibskammerat er ikke længere om bord.',
+    transferDone: (m) => `Roret tilhører nu ${m}, arr!`,
+    transferRateLimited: 'Discords grænse for omdøbning af denne kanal er nået, så roret bliver, hvor det er. Prøv igen om ca. 10 minutter.',
+    transferRenameFailed: 'Fartøjet kunne ikke omdøbes, så roret bliver, hvor det er. Tjek bottens rettigheder på kanalen.',
   },
   hail: {
     btnEnd: 'Afslut kald',
@@ -708,6 +758,7 @@ const daPirate: Strings = {
       '\n_Discord lader ikke botten hale dig om bord (oftest fordi du ejer skibet). ' +
       'Gå selv om bord i denne kanal for at hejse flaget._',
     transferred: (old, succ) => `⚓ <@${old}> forlod skibet. ${succ} er ny kaptajn. Kald slået fra.`,
+    handedOver: (old, succ) => `⚓ <@${old}> gav roret til ${succ}. Kald slået fra.`,
   },
 };
 

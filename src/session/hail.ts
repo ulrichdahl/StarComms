@@ -300,6 +300,11 @@ export class HailManager {
 
   isBusyBot(nato: string): boolean { return this.busyNatos.has(nato); }
 
+  /** True while the channel is reserved by an opening or active hail. */
+  isChannelInHail(guildId: string, channelId: string): boolean {
+    return this.busyChannels.has(this.chanKey(guildId, channelId));
+  }
+
   freeBotNatos(guildId?: string): string[] {
     return [...SQUAD_NATOS].filter((n) => {
       if (this.busyNatos.has(n)) return false;

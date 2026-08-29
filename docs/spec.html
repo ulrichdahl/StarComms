@@ -164,7 +164,7 @@
   <h4>In</h4>
   <ul>
     <li>Per-user voice channels created via a server-conventional <em>join-to-create</em> lobby.</li>
-    <li>Owner-driven control panel with buttons for rename, lock, member limit, kick, hail opt-in, and hail.</li>
+    <li>Owner-driven control panel with buttons for rename, lock, member limit, kick, ownership transfer, hail opt-in, and hail.</li>
     <li>Per-guild callsign registry: members pre-register a ship name, then opt their currently-owned channel into the hail directory.</li>
     <li>Bidirectional voice bridge between the owner of the hailing channel and the owner of each hailed channel. Owner audio only; crew audio stays local to their own channel.</li>
     <li><code>Ready</code> / <code>Attention</code> / <code>Ring</code> / <code>Busy</code> / <code>End</code> cues on channel transitions.</li>
@@ -252,7 +252,15 @@
     <li>Remaining members in the vessel can continue talking as they would in any Discord voice channel. When the channel empties, standard join-to-create cleanup deletes it.</li>
   </ul>
 
-  <p>There is no "transfer ownership" concept in v1. If a channel is empty of its owner, it is functionally an ordinary voice channel until it empties and is deleted.</p>
+  <h3>Ownership transfer</h3>
+
+  <p>Ownership moves in two ways, both through the same rename-gated routine:</p>
+  <ul>
+    <li><strong>Automatic.</strong> When the owner leaves and other humans remain, a 30 s grace window starts (a rejoin cancels it). After it, the longest-present remaining member becomes owner.</li>
+    <li><strong>Manual.</strong> The owner presses <strong>Transfer</strong> on the control panel (§4), picks one of the humans currently in the channel, and ownership moves immediately. Refused while the vessel is in a hail — a hail leg is bound to the owner's voice.</li>
+  </ul>
+  <p>The routine renames the channel to <code>🔊 [new owner display name]</code> <em>first</em> and does nothing else unless that succeeds: a vessel carrying the old owner's name or callsign after a transfer is confusing, and the rename is the one step Discord can refuse (~2 renames per 10 min per channel). On refusal the database is untouched. The manual path reports it to the owner ("try again in ~10 minutes"); the automatic path retries every 60 s, up to 15 times, while the owner is still absent and the channel still populated. On success the <code>vessels.owner_user_id</code> row is updated, the <code>hail_registry</code> row is dropped (the callsign belonged to the old owner, so hails are off), the control panel is re-rendered in place, and a notice is posted in the channel.</p>
+  <p>For this gate to work the controller's REST layer is configured to <em>reject</em> a rate-limited <code>PATCH /channels/:id</code> (<code>rejectOnRateLimit</code>) rather than the library default of silently queueing it for up to 10 minutes. Only that route is affected.</p>
 </section>
 
 <section id="s4">
@@ -267,6 +275,7 @@
       <tr><td><strong>Lock</strong> / <strong>Unlock</strong></td><td>Toggle. Locked adds a permission overwrite denying <code>CONNECT</code> to <code>@everyone</code>. Existing members are unaffected.</td></tr>
       <tr><td><strong>Limit</strong></td><td>Opens a modal with a numeric input. Sets <code>user_limit</code> on the channel. 0 disables the limit.</td></tr>
       <tr><td><strong>Kick</strong></td><td>Opens a member-select from the channel's current members. Disconnects the selected member from voice.</td></tr>
+      <tr><td><strong>Transfer</strong></td><td>Opens a member-select of the humans currently in the channel (excluding the owner). Hands ownership to the pick via the rename-gated routine in §3: refused if the rename is rate-limited or the vessel is in a hail; otherwise renames, disables hails, re-renders the panel and posts a notice.</td></tr>
       <tr><td><strong>Allow hails</strong> / <strong>Disable hails</strong></td><td>Requires the owner to be pre-registered (§5). Allow adds a row to <code>hail_registry</code> and renames the channel <code>🔊 …</code> → <code>🛰️ [callsign]</code>. Disable removes the registry row and renames back to <code>🔊 [display name]</code>. Both PATCHes count against Discord's ~2-per-10-min rename bucket, so Allow → Disable → Rename in quick succession will 429 on Rename with a ~10 min wait.</td></tr>
       <tr><td><strong>Hail</strong></td><td>Requires the owner's own channel to have hails enabled. Opens a channel-select populated from <code>hail_registry</code> (excluding self). See §6.</td></tr>
     </tbody>
@@ -642,7 +651,7 @@ Dockerfile                    # multi-stage, Debian slim
       <tr>
         <td><strong>Ownership transfer</strong></td>
         <td>Owner disconnects mid-hail; crew wants to keep the vessel alive</td>
-        <td>Control-panel button offering the crew member a transfer prompt. Requires new DB semantics for ownership succession.</td>
+        <td><em>Shipped</em> — automatic on owner-leave and manual via the <strong>Transfer</strong> button, see §3.</td>
       </tr>
     </tbody>
   </table></div>
