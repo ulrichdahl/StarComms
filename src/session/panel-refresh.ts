@@ -1,12 +1,19 @@
 /**
- * Re-render every live control panel in a guild.
+ * Re-render live control panels outside of a panel click.
  *
- * Used by `/star-comms set-language`: a panel is a persistent message
- * whose button labels and status lines are baked in at post time, so a
- * language change would otherwise leave stale panels until each one
- * is next clicked. The vessel row remembers `panel_message_id`; we
- * fetch each message through the controller and edit it in place with
- * a fresh `buildPanel` in the new language.
+ * A panel is a persistent message whose button labels, enabled state
+ * and status lines are baked in at post time. Two events change what
+ * a panel should show without going through one of its own buttons:
+ *
+ *   - `/star-comms set-language` — every panel in the guild needs new
+ *     labels (`refreshGuildPanels`).
+ *   - `/star-comms register` / `unregister` — the owner's panels need
+ *     **Allow hails** enabled/disabled and the callsign hint shown or
+ *     hidden; unregister also drops the vessel from the hail directory
+ *     (`refreshOwnerPanels`).
+ *
+ * The vessel row remembers `panel_message_id`; we fetch each message
+ * through the controller and edit it in place with a fresh `buildPanel`.
  *
  * Best-effort per panel: a channel or message that has vanished is
  * skipped (reconciliation drops the row later), and one failure never
@@ -24,6 +31,9 @@ export interface PanelRefreshResult {
   skipped: number;
 }
 
+interface PanelRow { channel_id: string; panel_message_id: string }
+
+/** Every live panel in the guild. */
 export async function refreshGuildPanels(
   db: DB, controller: Client, guildId: string, s: Strings,
 ): Promise<PanelRefreshResult> {
@@ -31,8 +41,25 @@ export async function refreshGuildPanels(
     SELECT channel_id, panel_message_id
     FROM vessels
     WHERE guild_id = ? AND deleted_at IS NULL AND panel_message_id IS NOT NULL
-  `).all(guildId) as Array<{ channel_id: string; panel_message_id: string }>;
+  `).all(guildId) as PanelRow[];
+  return refreshPanels(db, controller, s, rows);
+}
 
+/** Live panels of vessels owned by one member in the guild. */
+export async function refreshOwnerPanels(
+  db: DB, controller: Client, guildId: string, ownerUserId: string, s: Strings,
+): Promise<PanelRefreshResult> {
+  const rows = db.prepare(`
+    SELECT channel_id, panel_message_id
+    FROM vessels
+    WHERE guild_id = ? AND owner_user_id = ? AND deleted_at IS NULL AND panel_message_id IS NOT NULL
+  `).all(guildId, ownerUserId) as PanelRow[];
+  return refreshPanels(db, controller, s, rows);
+}
+
+async function refreshPanels(
+  db: DB, controller: Client, s: Strings, rows: PanelRow[],
+): Promise<PanelRefreshResult> {
   let updated = 0;
   let skipped = 0;
   for (const row of rows) {
