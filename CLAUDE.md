@@ -104,9 +104,9 @@ the previous product's design.
   on a feature branch cut from `develop` and merged back into it.
 - `main` is what Coolify deploys. It only moves by merging `develop`.
 - **Release procedure:** when `develop` is deemed stable, make one final
-  commit on `develop` with the version bump (`package.json`) and any
-  release housekeeping (docs, changelog). Merge `develop` → `main`,
-  then tag `main` with the version (`vX.Y.Z`) and create a GitHub
+  commit on `develop` with the version bump (`package.json`, semver
+  `major.minor.patch`) and any release housekeeping (docs, changelog).
+  Merge `develop` → `main`, then tag `main` `vX.Y.Z` and create a GitHub
   release on that tag whose description lists what went into it.
 - Tagging and publishing a release is outward-facing — do it only when
   asked to ship.
