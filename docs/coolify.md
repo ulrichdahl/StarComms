@@ -151,7 +151,8 @@ The healthcheck starts probing `/healthz` after 60 s. Once green, the
 container is registered with Discord and slash commands are live.
 
 Add each bot to your guild with the OAuth URLs in the main README, then
-run `/star-comms init` from the controller.
+run `/star-comms watch-channel` (and optionally `/star-comms set-language`)
+from the controller.
 
 ## Updating
 

@@ -33,12 +33,21 @@ import {
 import { CALLSIGN_MAX, CALLSIGN_MIN, registerCallsign, validateCallsign, CallsignError }
   from '../session/callsigns.js';
 import type { HailManager } from '../session/hail.js';
+import type { Strings } from '../lib/i18n.js';
 import { PANEL_IDS, buildPanel } from './panel.js';
+import { renderCallsignError } from './callsigns.js';
 
 export interface PanelDeps {
   db: DB;
   fleet: Fleet;
   hails: HailManager;
+  /** String table for a guild's current language. */
+  strings: (guildId: string) => Strings;
+}
+
+/** Strings for the guild the interaction came from. */
+function str(deps: PanelDeps, interaction: { guildId: string | null }): Strings {
+  return deps.strings(interaction.guildId ?? '');
 }
 
 type AnyPanelInteraction =
@@ -60,7 +69,7 @@ export function makePanelDispatcher(deps: PanelDeps) {
         // async function does NOT catch the promise's later rejection.
         // Without the await, a Discord API error out of a handler flew
         // right past this try/catch and crashed the process.
-        case PANEL_IDS.rename: return await handleRenameClick(interaction as ButtonInteraction);
+        case PANEL_IDS.rename: return await handleRenameClick(deps, interaction as ButtonInteraction);
         case PANEL_IDS.renameSubmit: return await handleRenameSubmit(deps, interaction as ModalSubmitInteraction);
         case PANEL_IDS.lockToggle: return await handleLockToggle(deps, interaction as ButtonInteraction);
         case PANEL_IDS.limit: return await handleLimitClick(deps, interaction as ButtonInteraction);
@@ -94,18 +103,13 @@ async function requireOwner(
   const channelId = interaction.channelId;
   if (channelId === null) return null;
   const state = getVesselState(deps.db, channelId);
+  const s = str(deps, interaction);
   if (state === null) {
-    await interaction.reply({
-      content: 'This panel is stale — the vessel is no longer tracked.',
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
+    await interaction.reply({ content: s.panelHandlers.stale, flags: MessageFlags.Ephemeral }).catch(() => {});
     return null;
   }
   if (interaction.user.id !== state.ownerUserId) {
-    await interaction.reply({
-      content: 'Only the channel owner can use these controls.',
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
+    await interaction.reply({ content: s.panelHandlers.notOwner, flags: MessageFlags.Ephemeral }).catch(() => {});
     return null;
   }
   return state;
@@ -204,7 +208,7 @@ async function refreshPanel(
   if (channelId === null) return;
   const state = getVesselState(deps.db, channelId);
   if (state === null) return;
-  const rendered = buildPanel(state);
+  const rendered = buildPanel(state, deps.strings(state.guildId));
   const message = interaction.message;
   if (message !== null && message !== undefined) {
     await message.edit({ content: rendered.content, components: rendered.components }).catch(() => {});
@@ -215,15 +219,16 @@ async function refreshPanel(
 // rename
 // ---------------------------------------------------------------------------
 
-async function handleRenameClick(interaction: ButtonInteraction): Promise<void> {
+async function handleRenameClick(deps: PanelDeps, interaction: ButtonInteraction): Promise<void> {
+  const s = str(deps, interaction);
   const modal = new ModalBuilder()
     .setCustomId(PANEL_IDS.renameSubmit)
-    .setTitle('Rename your channel')
+    .setTitle(s.panelHandlers.renameTitle)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId('name')
-          .setLabel(`New name (${CALLSIGN_MIN}–${CALLSIGN_MAX} chars)`)
+          .setLabel(s.panelHandlers.renameLabel(CALLSIGN_MIN, CALLSIGN_MAX))
           .setStyle(TextInputStyle.Short)
           .setMinLength(CALLSIGN_MIN)
           .setMaxLength(CALLSIGN_MAX)
@@ -236,6 +241,7 @@ async function handleRenameClick(interaction: ButtonInteraction): Promise<void> 
 async function handleRenameSubmit(deps: PanelDeps, interaction: ModalSubmitInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
   const raw = interaction.fields.getTextInputValue('name');
 
   let cleaned: string;
@@ -243,7 +249,7 @@ async function handleRenameSubmit(deps: PanelDeps, interaction: ModalSubmitInter
     cleaned = validateCallsign(raw);
   } catch (err) {
     await interaction.reply({
-      content: err instanceof CallsignError ? err.message : 'invalid name',
+      content: err instanceof CallsignError ? renderCallsignError(s, err) : s.panelHandlers.invalidName,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -257,7 +263,7 @@ async function handleRenameSubmit(deps: PanelDeps, interaction: ModalSubmitInter
       registerCallsign(deps.db, state.guildId, state.ownerUserId, cleaned);
     } catch (err) {
       await interaction.reply({
-        content: err instanceof CallsignError ? err.message : 'callsign conflict',
+        content: err instanceof CallsignError ? renderCallsignError(s, err) : s.panelHandlers.callsignConflict,
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -274,19 +280,13 @@ async function handleRenameSubmit(deps: PanelDeps, interaction: ModalSubmitInter
     await channel.setName(newName, 'Star Comms: rename via panel');
   } catch (err) {
     if (isDiscordRateLimit(err)) {
-      await interaction.reply({
-        content: 'Discord\'s rename limit for this channel is reached. Try again in ~10 minutes.',
-        flags: MessageFlags.Ephemeral,
-      });
+      await interaction.reply({ content: s.panelHandlers.renameRateLimited, flags: MessageFlags.Ephemeral });
       return;
     }
     throw err;
   }
 
-  await interaction.reply({
-    content: `Renamed to **${newName}**.`,
-    flags: MessageFlags.Ephemeral,
-  });
+  await interaction.reply({ content: s.panelHandlers.renamed(newName), flags: MessageFlags.Ephemeral });
   await refreshPanel(deps, interaction);
 }
 
@@ -312,7 +312,7 @@ async function handleLockToggle(deps: PanelDeps, interaction: ButtonInteraction)
   // Using `interaction.update` here — a two-call `reply + edit`
   // pattern was leaving the panel stale when the follow-up edit
   // 403'd on channels with narrower controller perms.
-  const rendered = buildPanel({ ...state, locked: nextLocked });
+  const rendered = buildPanel({ ...state, locked: nextLocked }, deps.strings(state.guildId));
   await interaction.update({ content: rendered.content, components: rendered.components });
 }
 
@@ -323,14 +323,15 @@ async function handleLockToggle(deps: PanelDeps, interaction: ButtonInteraction)
 async function handleLimitClick(deps: PanelDeps, interaction: ButtonInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
   const modal = new ModalBuilder()
     .setCustomId(PANEL_IDS.limitSubmit)
-    .setTitle('User limit')
+    .setTitle(s.panelHandlers.limitTitle)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId('limit')
-          .setLabel('Max users (0 = no limit, max 99)')
+          .setLabel(s.panelHandlers.limitLabel)
           .setStyle(TextInputStyle.Short)
           .setValue(String(state.userLimit))
           .setMinLength(1)
@@ -344,13 +345,11 @@ async function handleLimitClick(deps: PanelDeps, interaction: ButtonInteraction)
 async function handleLimitSubmit(deps: PanelDeps, interaction: ModalSubmitInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
   const raw = interaction.fields.getTextInputValue('limit').trim();
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 99) {
-    await interaction.reply({
-      content: `Not a valid limit: **${raw}**. Enter an integer between 0 (no limit) and 99.`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.reply({ content: s.panelHandlers.limitInvalid(raw), flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -359,7 +358,7 @@ async function handleLimitSubmit(deps: PanelDeps, interaction: ModalSubmitIntera
   await channel.setUserLimit(parsed, 'Star Comms: limit via panel');
   setVesselUserLimit(deps.db, state.channelId, parsed);
 
-  const rendered = buildPanel({ ...state, userLimit: parsed });
+  const rendered = buildPanel({ ...state, userLimit: parsed }, s);
   // Modal-submit only exposes .update when it was opened from a
   // message component (the Limit button here). Guard for the type
   // narrowing; the fallback edits the panel message directly.
@@ -368,7 +367,7 @@ async function handleLimitSubmit(deps: PanelDeps, interaction: ModalSubmitIntera
   } else {
     await refreshPanel(deps, interaction);
     await interaction.reply({
-      content: parsed === 0 ? 'User limit removed.' : `User limit set to ${parsed}.`,
+      content: parsed === 0 ? s.panelHandlers.limitRemoved : s.panelHandlers.limitSet(parsed),
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -381,18 +380,17 @@ async function handleLimitSubmit(deps: PanelDeps, interaction: ModalSubmitIntera
 async function handleKickClick(deps: PanelDeps, interaction: ButtonInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
 
   const menu = new UserSelectMenuBuilder()
     .setCustomId(PANEL_IDS.kickPick)
-    .setPlaceholder('Pick a member to disconnect')
+    .setPlaceholder(s.panelHandlers.kickPlaceholder)
     .setMinValues(1)
     .setMaxValues(1);
   const row = new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(menu);
 
   await interaction.reply({
-    content:
-      'Pick a member to disconnect from your channel. ' +
-      'The bot disconnects them from voice — they can rejoin if the channel is unlocked.',
+    content: s.panelHandlers.kickIntro,
     components: [row],
     flags: MessageFlags.Ephemeral,
   });
@@ -401,25 +399,23 @@ async function handleKickClick(deps: PanelDeps, interaction: ButtonInteraction):
 async function handleKickPick(deps: PanelDeps, interaction: UserSelectMenuInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
   const targetId = interaction.values[0];
   if (targetId === undefined) return;
 
   if (targetId === state.ownerUserId) {
-    await interaction.update({ content: 'You cannot kick yourself.', components: [] });
+    await interaction.update({ content: s.panelHandlers.kickSelf, components: [] });
     return;
   }
 
   const guild = interaction.guild!;
   const target = await guild.members.fetch(targetId).catch(() => null);
   if (target === null) {
-    await interaction.update({ content: 'That member is not in this guild.', components: [] });
+    await interaction.update({ content: s.panelHandlers.kickNotMember, components: [] });
     return;
   }
   if (target.voice.channelId !== state.channelId) {
-    await interaction.update({
-      content: `<@${targetId}> is not in this channel.`,
-      components: [],
-    });
+    await interaction.update({ content: s.panelHandlers.kickNotInChannel(targetId), components: [] });
     return;
   }
 
@@ -427,19 +423,13 @@ async function handleKickPick(deps: PanelDeps, interaction: UserSelectMenuIntera
     await target.voice.disconnect('Star Comms: kick via panel');
   } catch (err) {
     if (err instanceof Error && /Missing Permissions/i.test(err.message)) {
-      await interaction.update({
-        content: `The bot cannot move <@${targetId}> — they may hold a role higher than the controller.`,
-        components: [],
-      });
+      await interaction.update({ content: s.panelHandlers.kickNoPermission(targetId), components: [] });
       return;
     }
     throw err;
   }
 
-  await interaction.update({
-    content: `Disconnected <@${targetId}> from the channel.`,
-    components: [],
-  });
+  await interaction.update({ content: s.panelHandlers.kicked(targetId), components: [] });
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +439,7 @@ async function handleKickPick(deps: PanelDeps, interaction: UserSelectMenuIntera
 async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
 
   if (state.hailsEnabled) {
     // Disable: drop the hail_registry row and rename the channel back
@@ -469,7 +460,7 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
       });
     }
     // Panel update via interaction.update — atomically re-renders.
-    const rendered = buildPanel({ ...state, hailsEnabled: false });
+    const rendered = buildPanel({ ...state, hailsEnabled: false }, s);
     await interaction.update({ content: rendered.content, components: rendered.components });
     // Fire-and-forget `disconnected` announcement in the vessel.
     void deps.hails.playAnnouncement(state.guildId, state.channelId, 'disconnected')
@@ -480,10 +471,7 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
   // Enable: register the vessel with the owner's callsign, PATCH the
   // channel name to 🛰️ <callsign>. Requires a registered callsign.
   if (state.callsign === null) {
-    await interaction.reply({
-      content: 'Register a callsign with `/star-comms register` first — the button label reflects this after a refresh.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.reply({ content: s.panelHandlers.needCallsignFirst, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -509,15 +497,15 @@ async function handleHailsToggle(deps: PanelDeps, interaction: ButtonInteraction
 
   // Re-render the panel atomically. `interaction.update` swaps the
   // button labels/styles even if the rename PATCH failed.
-  const rendered = buildPanel({ ...state, hailsEnabled: true, callsign: state.callsign });
+  const rendered = buildPanel({ ...state, hailsEnabled: true, callsign: state.callsign }, s);
   await interaction.update({ content: rendered.content, components: rendered.components });
 
   if (!renameOk) {
     const detail = isDiscordRateLimit(renameErr)
-      ? 'Discord\'s rename limit for this channel is reached — try again in ~10 minutes.'
-      : 'Use the **Rename** button to set the name manually.';
+      ? s.panelHandlers.renameLimitDetail
+      : s.panelHandlers.renameManualDetail;
     await interaction.followUp({
-      content: `Hails enabled — the channel name could not be updated automatically. ${detail}`,
+      content: s.panelHandlers.hailsEnabledRenameFailed(detail),
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
   }
@@ -540,12 +528,10 @@ interface DirectoryRow {
 async function handleHailClick(deps: PanelDeps, interaction: ButtonInteraction): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
 
   if (!state.hailsEnabled) {
-    await interaction.reply({
-      content: 'Enable hails on your own channel first — the button is disabled until then.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.reply({ content: s.panelHandlers.enableHailsFirst, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -559,10 +545,7 @@ async function handleHailClick(deps: PanelDeps, interaction: ButtonInteraction):
   `).all(state.guildId, state.channelId) as DirectoryRow[];
 
   if (directory.length === 0) {
-    await interaction.reply({
-      content: 'No other vessels have hails enabled in this guild yet.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.reply({ content: s.panelHandlers.noOtherVessels, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -574,7 +557,7 @@ async function handleHailClick(deps: PanelDeps, interaction: ButtonInteraction):
   const maxTargets = Math.max(1, freeBots - 1);
   const menu = new StringSelectMenuBuilder()
     .setCustomId(PANEL_IDS.hailPick)
-    .setPlaceholder(maxTargets > 1 ? `Pick up to ${maxTargets} vessels to hail` : 'Pick a vessel to hail')
+    .setPlaceholder(s.panelHandlers.hailPickPlaceholder(maxTargets))
     .setMinValues(1)
     .setMaxValues(Math.min(maxTargets, directory.length));
   for (const row of directory) {
@@ -583,7 +566,7 @@ async function handleHailClick(deps: PanelDeps, interaction: ButtonInteraction):
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 
   await interaction.reply({
-    content: '🛰️ Pick vessels to hail. Ready cue on your side, Attention cue on theirs.',
+    content: s.panelHandlers.hailPickIntro,
     components: [row],
     flags: MessageFlags.Ephemeral,
   });
@@ -594,9 +577,10 @@ async function handleHailPick(
 ): Promise<void> {
   const state = await requireOwner(deps, interaction);
   if (state === null) return;
+  const s = deps.strings(state.guildId);
 
   if (interaction.values.length === 0) {
-    await interaction.update({ content: 'No targets picked.', components: [] });
+    await interaction.update({ content: s.panelHandlers.noTargets, components: [] });
     return;
   }
 
@@ -613,15 +597,11 @@ async function handleHailPick(
     targets.push({ channelId, ownerUserId: row.owner_user_id });
   }
   if (targets.length === 0) {
-    await interaction.update({
-      content: 'None of the picked vessels are still available.', components: [],
-    });
+    await interaction.update({ content: s.panelHandlers.noneAvailable, components: [] });
     return;
   }
 
-  await interaction.update({
-    content: `🛰️ Opening hail to ${targets.length} vessel(s)…`, components: [],
-  });
+  await interaction.update({ content: s.panelHandlers.opening(targets.length), components: [] });
 
   const result = await deps.hails.open({
     guildId: state.guildId,
@@ -630,34 +610,9 @@ async function handleHailPick(
   });
 
   const followUp = result.ok
-    ? `Hail open. Speak now. Silence for ${Math.round(deps.hails.silenceCloseMs() / 1000)}s auto-closes.`
-    : renderHailError(result.reason);
+    ? s.panelHandlers.hailOpen(Math.round(deps.hails.silenceCloseMs() / 1000))
+    : s.panelHandlers.hailError(result.reason);
 
   await interaction.followUp({ content: followUp, flags: MessageFlags.Ephemeral })
     .catch(() => {});
-}
-
-function renderHailError(reason: string): string {
-  switch (reason) {
-    case 'no_relays':
-      return 'Not enough relay bots are free right now. Try again in a minute.';
-    case 'not_in_guild':
-      return 'Not enough relay bots are in this guild. Ask the guild owner to invite the missing relays.';
-    case 'no_targets':
-      return 'No targets were selected.';
-    case 'target_gone':
-      return 'The target vessel disappeared before the hail could open.';
-    case 'already_hailing':
-      return 'Your channel is already in an active hail. End it before starting a new one.';
-    case 'target_busy':
-      return 'The chosen target is already in another hail. Try again once it has ended.';
-    case 'declined':
-      return 'The target declined the hail.';
-    case 'timeout':
-      return 'The target did not answer within the ring window.';
-    case 'all_declined':
-      return 'Every target declined or did not answer.';
-    default:
-      return `Hail could not open: ${reason}`;
-  }
 }

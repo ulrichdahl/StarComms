@@ -89,6 +89,14 @@ the previous product's design.
 - **Channel rename PATCH is limited to ~2 per 10 min per channel.**
   User-driven renames are best-effort — surface Discord's 429 back to
   the operator ("try again in ~10 minutes") rather than queuing.
+- **Language is per guild, never per user.** Discord renders a bot's
+  buttons and channel posts identically for every member, so
+  `guilds.locale` is the only unit of localisation. No user-facing
+  string may be a literal in a handler — add it to every table in
+  `src/lib/i18n.ts` (the `Strings` interface makes the compiler
+  enforce completeness) and resolve via the guild's locale. Cue audio
+  is per locale too; a missing locale falls back to the default
+  locale's audio, never to silence or a crash.
 
 ## Build order
 
@@ -104,6 +112,9 @@ smoke test.
     src/index.ts           entrypoint (fleet + healthz + /star-comms status)
     src/fleet/             manager, boot sweep, healthz
     src/commands/          slash registrar + /star-comms tree
+                           (watch-channel, set-language, callsigns, panel)
+    src/lib/i18n.ts        per-locale string tables — every Discord-visible
+                           string lives here; locale is per guild
     src/session/relay.ts   bidirectional audio-relay primitive
                            (extended into runHailLeg in step 6)
     src/lib/               config, db, cues, audio helpers, env, pkg

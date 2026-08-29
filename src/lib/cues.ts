@@ -21,6 +21,7 @@ import prism from 'prism-media';
 import {
   createAudioResource, StreamType, type AudioResource,
 } from '@discordjs/voice';
+import { LOCALES, type Locale } from './config.js';
 
 export const CUE_NAMES = [
   'ready', 'attention', 'ring', 'busy', 'end',
@@ -132,6 +133,66 @@ export function createCueResource(cue: LoadedCue): AudioResource {
   for (const p of cue.packets) stream.push(p);
   stream.push(null);
   return createAudioResource(stream, { inputType: StreamType.Opus });
+}
+
+/**
+ * Every locale's CueSet, keyed by locale, plus the fallback rule.
+ *
+ * Guilds pick their language at runtime (`/star-comms set-language`),
+ * so the fleet must hold cue audio for every locale it might be asked
+ * for. A locale that has no cue block in fleet.yaml, or whose assets
+ * failed to load, is absent from the map; `forLocale` then returns the
+ * default locale's set so a hail still plays *something* rather than
+ * failing at cue-lookup time. The text side of that guild is still in
+ * its chosen language — only the audio degrades.
+ */
+export class CueLibrary {
+  constructor(
+    private readonly sets: Map<Locale, CueSet>,
+    readonly defaultLocale: Locale,
+  ) {
+    if (!sets.has(defaultLocale)) {
+      throw new CueLoadError(`default locale ${defaultLocale} has no loaded cue set`);
+    }
+  }
+
+  /** True when this locale has its own audio (no fallback needed). */
+  has(locale: Locale): boolean { return this.sets.has(locale); }
+
+  /** Locales with their own audio, in LOCALES order. */
+  loadedLocales(): Locale[] { return LOCALES.filter((l) => this.sets.has(l)); }
+
+  /** The locale's own set, or the default locale's set when absent. */
+  forLocale(locale: Locale): CueSet {
+    return this.sets.get(locale) ?? this.sets.get(this.defaultLocale)!;
+  }
+}
+
+/**
+ * Load a CueSet for every locale that has a block under
+ * `cue_sets.<cueSet>` in fleet.yaml. The default locale is mandatory
+ * and fails loud; any other locale that fails to resolve or load is
+ * skipped with a warning via `onSkip` so a missing pirate set does not
+ * take the fleet down.
+ */
+export async function loadCueLibrary(
+  rawConfig: unknown,
+  cueSet: string,
+  defaultLocale: Locale,
+  configPath: string,
+  onSkip: (locale: Locale, reason: string) => void = () => {},
+): Promise<CueLibrary> {
+  const sets = new Map<Locale, CueSet>();
+  for (const locale of LOCALES) {
+    try {
+      const paths = resolveCuePaths(rawConfig, cueSet, locale, configPath);
+      sets.set(locale, await loadCueSet(paths));
+    } catch (err) {
+      if (locale === defaultLocale) throw err;
+      onSkip(locale, err instanceof Error ? err.message : String(err));
+    }
+  }
+  return new CueLibrary(sets, defaultLocale);
 }
 
 /**

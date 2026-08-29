@@ -5,6 +5,11 @@
  * every member of the guild sees it — the registration flow needs
  * ordinary members to have access. Admin-gated subcommands enforce
  * `MANAGE_GUILD` in the handler.
+ *
+ * Subcommand *names* are stable identifiers (they key the handler
+ * map and appear in docs); only *descriptions* are localised. The
+ * registrar registers per guild, so each guild sees descriptions in
+ * its own language and `set-language` re-registers on change.
  */
 
 import {
@@ -12,26 +17,41 @@ import {
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
 } from 'discord.js';
 import { CALLSIGN_MAX, CALLSIGN_MIN } from '../session/callsigns.js';
+import type { Strings } from '../lib/i18n.js';
 
-export function starCommsCommand(): RESTPostAPIChatInputApplicationCommandsJSONBody {
+export const SUBCOMMANDS = {
+  watchChannel: 'watch-channel',
+  setLanguage: 'set-language',
+  register: 'register',
+  unregister: 'unregister',
+  callsign: 'callsign',
+  status: 'status',
+} as const;
+
+export function starCommsCommand(s: Strings): RESTPostAPIChatInputApplicationCommandsJSONBody {
   return {
     name: 'star-comms',
-    description: 'Star Comms — cooperative-play voice bridge.',
+    description: s.cmd.root,
     dm_permission: false,
     options: [
       {
-        name: 'init',
-        description: 'Admin: configure Star Comms for this guild — pick the join-to-create voice channel.',
+        name: SUBCOMMANDS.watchChannel,
+        description: s.cmd.watchChannel,
         type: ApplicationCommandOptionType.Subcommand,
       },
       {
-        name: 'register',
-        description: 'Register or replace your callsign in this guild.',
+        name: SUBCOMMANDS.setLanguage,
+        description: s.cmd.setLanguage,
+        type: ApplicationCommandOptionType.Subcommand,
+      },
+      {
+        name: SUBCOMMANDS.register,
+        description: s.cmd.register,
         type: ApplicationCommandOptionType.Subcommand,
         options: [
           {
             name: 'callsign',
-            description: `Your ship name (${CALLSIGN_MIN}–${CALLSIGN_MAX} characters).`,
+            description: s.cmd.registerCallsignOption(CALLSIGN_MIN, CALLSIGN_MAX),
             type: ApplicationCommandOptionType.String,
             required: true,
             min_length: CALLSIGN_MIN,
@@ -40,18 +60,18 @@ export function starCommsCommand(): RESTPostAPIChatInputApplicationCommandsJSONB
         ],
       },
       {
-        name: 'unregister',
-        description: 'Remove your callsign. Drops your vessels from the hail directory too.',
+        name: SUBCOMMANDS.unregister,
+        description: s.cmd.unregister,
         type: ApplicationCommandOptionType.Subcommand,
       },
       {
-        name: 'callsign',
-        description: 'Report your current callsign.',
+        name: SUBCOMMANDS.callsign,
+        description: s.cmd.callsign,
         type: ApplicationCommandOptionType.Subcommand,
       },
       {
-        name: 'status',
-        description: 'Report the fleet state for this guild.',
+        name: SUBCOMMANDS.status,
+        description: s.cmd.status,
         type: ApplicationCommandOptionType.Subcommand,
       },
     ],

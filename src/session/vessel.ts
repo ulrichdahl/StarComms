@@ -32,6 +32,7 @@ import { getJoinToCreateChannel } from './guild-row.js';
 import { buildPanel } from '../commands/panel.js';
 import { getVesselState } from './vessel-state.js';
 import type { HailManager } from './hail.js';
+import type { Strings } from '../lib/i18n.js';
 
 const CLEANUP_DELAY_MS = 30_000;
 
@@ -40,6 +41,8 @@ interface VesselServiceConfig {
   db: DB;
   /** Present when cues loaded and the hail service is armed. */
   hails: HailManager | null;
+  /** String table for a guild's current language. */
+  strings: (guildId: string) => Strings;
 }
 
 interface VesselRow {
@@ -337,11 +340,9 @@ async function createVesselFor(
     console.error(`vessel: state lookup failed for freshly-created ${channel.id}`);
     return;
   }
-  const panel = buildPanel(state);
-  const notice = moved
-    ? ''
-    : '\n_Discord blocks the bot from moving you (most often because you are the guild owner). ' +
-      'Join this channel manually to activate it._';
+  const s = cfg.strings(state.guildId);
+  const panel = buildPanel(state, s);
+  const notice = moved ? '' : s.vessel.cannotMoveNotice;
   const posted = await channel.send({
     content: `${panel.content}${notice}`, components: panel.components,
   }).catch((err) => {
@@ -494,7 +495,7 @@ async function transferOwnership(
     if (freshState !== null) {
       const message = await channel.messages.fetch(messageId).catch(() => null);
       if (message !== null) {
-        const rendered = buildPanel(freshState);
+        const rendered = buildPanel(freshState, cfg.strings(freshState.guildId));
         await message.edit({
           content: rendered.content, components: rendered.components,
         }).catch((err) => {
@@ -505,7 +506,7 @@ async function transferOwnership(
   }
 
   await channel.send({
-    content: `⚓ <@${oldOwnerUserId}> left. Ownership passed to ${successor.toString()}. Hails disabled.`,
+    content: cfg.strings(channel.guildId).vessel.transferred(oldOwnerUserId, successor.toString()),
   }).catch((err) => {
     console.error(`vessel: transfer notice post failed: ${errMsg(err)}`);
   });

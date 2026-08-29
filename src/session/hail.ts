@@ -61,8 +61,10 @@ import { PassThrough } from 'node:stream';
 import { NwayMixer, subscribeManual } from './nway-mixer.js';
 import type { DB } from '../lib/db.js';
 import type { Fleet } from '../fleet/manager.js';
-import type { CueSet } from '../lib/cues.js';
+import type { CueLibrary, CueSet } from '../lib/cues.js';
 import { createCueResource } from '../lib/cues.js';
+import type { Locale } from '../lib/config.js';
+import { stringsFor, type Strings } from '../lib/i18n.js';
 
 export type HailCloseReason =
   | 'silence' | 'button' | 'initiator_left' | 'max_hold'
@@ -73,7 +75,10 @@ export type RingDecision = 'accepted' | 'declined' | 'timeout';
 export interface HailServiceConfig {
   db: DB;
   fleet: Fleet;
-  cues: CueSet;
+  /** Every locale's cue audio; picked per guild via `localeFor`. */
+  cues: CueLibrary;
+  /** The guild's current language — selects cue audio and button text. */
+  localeFor: (guildId: string) => Locale;
   silenceCloseMs: number;
   maxHoldMs: number;
   ringIntervalMs: number;
@@ -226,6 +231,15 @@ export class HailManager {
     return this.freeBotNatos(guildId).length;
   }
 
+  /** Cue audio for a guild's language (falls back to the default locale's set). */
+  private cuesFor(guildId: string): CueSet {
+    return this.cfg.cues.forLocale(this.cfg.localeFor(guildId));
+  }
+
+  private strings(guildId: string): Strings {
+    return stringsFor(this.cfg.localeFor(guildId));
+  }
+
   /**
    * One-shot cue visit — a free relay joins the channel, plays the cue
    * to completion, and disconnects. Fire-and-forget; if no relay is
@@ -271,7 +285,7 @@ export class HailManager {
       });
       connection.subscribe(player);
       try {
-        player.play(createCueResource(this.cfg.cues.get(cueName)));
+        player.play(createCueResource(this.cuesFor(guildId).get(cueName)));
         await waitForPlayerIdle(player);
       } catch (err) {
         console.error(`announcement: play ${cueName} failed on ${channelId}: ${errMsg(err)}`);
@@ -541,7 +555,7 @@ export class HailManager {
       // to reach Idle so the mixer path doesn't step on cue playback.
       // Cues vary in length across locales — no fixed D_c anymore.
       const cuePlays = hail.legs.map((leg) => {
-        leg.outboundPlayer.play(createCueResource(this.cfg.cues.get(leg.cueRole)));
+        leg.outboundPlayer.play(createCueResource(this.cuesFor(leg.guildId).get(leg.cueRole)));
         return waitForPlayerIdle(leg.outboundPlayer);
       });
       await Promise.all(cuePlays);
@@ -552,7 +566,7 @@ export class HailManager {
       // End buttons via the controller — one per surviving leg.
       const controller = this.cfg.fleet.controllerClient();
       for (const leg of hail.legs) {
-        leg.endMessage = await postEndButton(controller, leg.channelId, hailId).catch((err) => {
+        leg.endMessage = await postEndButton(controller, leg.channelId, hailId, this.strings(leg.guildId)).catch((err) => {
           console.error(`hail ${hailId}: end-button post failed on ${leg.channelId}: ${errMsg(err)}`);
           return null;
         });
@@ -779,7 +793,7 @@ export class HailManager {
    */
   private async ringForAccept(hail: Hail, targetLeg: HailLeg): Promise<RingDecision> {
     const controller = this.cfg.fleet.controllerClient();
-    const message = await postRingButtons(controller, targetLeg.channelId, hail.hailId)
+    const message = await postRingButtons(controller, targetLeg.channelId, hail.hailId, this.strings(targetLeg.guildId))
       .catch((err) => {
         console.error(`hail ${hail.hailId}: ring buttons post failed: ${errMsg(err)}`);
         return null;
@@ -809,7 +823,7 @@ export class HailManager {
       const playRing = async (): Promise<void> => {
         if (done || hail.closing || hail.closed) return;
         try {
-          targetLeg.outboundPlayer.play(createCueResource(this.cfg.cues.get('ring')));
+          targetLeg.outboundPlayer.play(createCueResource(this.cuesFor(targetLeg.guildId).get('ring')));
           await waitForPlayerIdle(targetLeg.outboundPlayer, 5_000);
         } catch (err) {
           console.error(`hail ${hail.hailId}: ring cue play failed: ${errMsg(err)}`);
@@ -836,7 +850,7 @@ export class HailManager {
     this.stopHeartbeat(hail);
 
     try {
-      initiatorLeg.outboundPlayer.play(createCueResource(this.cfg.cues.get('busy')));
+      initiatorLeg.outboundPlayer.play(createCueResource(this.cuesFor(initiatorLeg.guildId).get('busy')));
       await waitForPlayerIdle(initiatorLeg.outboundPlayer);
     } catch (err) {
       console.error(`hail ${hail.hailId}: busy cue play failed: ${errMsg(err)}`);
@@ -897,7 +911,7 @@ export class HailManager {
 
     // Play `end` on every remaining leg, wait for all to finish.
     const endPlays = hail.legs.map((leg) => {
-      leg.outboundPlayer.play(createCueResource(this.cfg.cues.get('end')));
+      leg.outboundPlayer.play(createCueResource(this.cuesFor(leg.guildId).get('end')));
       return waitForPlayerIdle(leg.outboundPlayer);
     });
     await Promise.all(endPlays);
@@ -939,7 +953,7 @@ export class HailManager {
 // ---------------------------------------------------------------------------
 
 async function postEndButton(
-  controller: Client, channelId: string, hailId: number,
+  controller: Client, channelId: string, hailId: number, s: Strings,
 ): Promise<Message | null> {
   const channel = await controller.channels.fetch(channelId).catch(() => null);
   if (channel === null) return null;
@@ -947,14 +961,14 @@ async function postEndButton(
   const voice = channel as VoiceBasedChannel;
   const button = new ButtonBuilder()
     .setCustomId(`${HAIL_END_PREFIX}${hailId}`)
-    .setLabel('End hail')
+    .setLabel(s.hail.btnEnd)
     .setStyle(ButtonStyle.Danger);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
-  return voice.send({ content: '🛰️ **Hail active.**', components: [row] });
+  return voice.send({ content: s.hail.active, components: [row] });
 }
 
 async function postRingButtons(
-  controller: Client, channelId: string, hailId: number,
+  controller: Client, channelId: string, hailId: number, s: Strings,
 ): Promise<Message | null> {
   const channel = await controller.channels.fetch(channelId).catch(() => null);
   if (channel === null) return null;
@@ -962,15 +976,15 @@ async function postRingButtons(
   const voice = channel as VoiceBasedChannel;
   const accept = new ButtonBuilder()
     .setCustomId(`${HAIL_ACCEPT_PREFIX}${hailId}`)
-    .setLabel('Accept')
+    .setLabel(s.hail.btnAccept)
     .setStyle(ButtonStyle.Success);
   const decline = new ButtonBuilder()
     .setCustomId(`${HAIL_DECLINE_PREFIX}${hailId}`)
-    .setLabel('Decline')
+    .setLabel(s.hail.btnDecline)
     .setStyle(ButtonStyle.Danger);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(accept, decline);
   return voice.send({
-    content: '🛰️ **Incoming hail.** Only the vessel owner can respond.',
+    content: s.hail.incoming,
     components: [row],
   });
 }

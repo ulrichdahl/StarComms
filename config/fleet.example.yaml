@@ -25,7 +25,9 @@ fleet:
     application_id: "000000000000000000"
     token_env: SB_TOKEN_CHARLIE
 
-# Per-guild overridable defaults.
+# Per-guild overridable defaults. `locale` is the language a guild starts
+# in; admins change it per guild with `/star-comms set-language`. It must
+# be one of: en, da, en-pirate, da-pirate.
 defaults:
   locale: en
   cue_set: default
@@ -35,19 +37,38 @@ defaults:
   hail_silence_close_ms: 10000    # hail closes when no owner has spoken for this long
   hail_max_hold_ms: 1800000       # hard cap on a single hail (30 min safety net)
 
-# Cue audio. Startup validates every asset against cue_duration_ms; ready
-# and attention must match exactly (they play concurrently across channels),
-# ring/busy/end have wider tolerance.
+# Cue audio, one block per locale plus `shared` for locale-neutral SFX.
+# Every locale block needs all five voice cues. The default locale's block
+# is mandatory at boot; any other locale that is missing or fails to load
+# is skipped with a warning and guilds using it hear the default locale's
+# audio until the files are installed. Generate all four with
+# `generate-cues.sh` (espeak-ng) and see cues/README.md.
 cue_sets:
   default:
     en:
-      ready:     cues/en/ready.wav
-      attention: cues/en/attention.wav
-      busy:      cues/en/busy.wav
+      ready:        cues/en/ready.wav
+      attention:    cues/en/attention.wav
+      busy:         cues/en/busy.wav
+      established:  cues/en/established.wav
+      disconnected: cues/en/disconnected.wav
     da:
-      ready:     cues/da/klar.wav
-      attention: cues/da/giv_agt.wav
-      busy:      cues/da/optaget.wav
+      ready:        cues/da/klar.wav
+      attention:    cues/da/giv_agt.wav
+      busy:         cues/da/optaget.wav
+      established:  cues/da/etableret.wav
+      disconnected: cues/da/afbrudt.wav
+    en-pirate:
+      ready:        cues/en-pirate/ready.wav
+      attention:    cues/en-pirate/attention.wav
+      busy:         cues/en-pirate/busy.wav
+      established:  cues/en-pirate/established.wav
+      disconnected: cues/en-pirate/disconnected.wav
+    da-pirate:
+      ready:        cues/da-pirate/klar.wav
+      attention:    cues/da-pirate/giv_agt.wav
+      busy:         cues/da-pirate/optaget.wav
+      established:  cues/da-pirate/etableret.wav
+      disconnected: cues/da-pirate/afbrudt.wav
     shared:
       ring:      cues/ring.wav
       end:       cues/end.wav

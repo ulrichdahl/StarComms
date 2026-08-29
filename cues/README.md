@@ -25,6 +25,25 @@ its first packets on receiving clients.
 Format: 48 kHz, 16-bit, stereo WAV. Assets are pre-encoded to Opus frames and
 cached in memory at startup, so playback costs nothing at runtime.
 
-Audio files are gitignored. Generate placeholders with `scripts/gen-cues.sh`
-(sine waves), or ship your own — TTS via Piper (`da_DK-talesyntese-medium` or
-any `en_*` voice) is the intended path.
+## Locales
+
+One directory per guild-selectable locale (`/star-comms set-language`),
+paths declared under `cue_sets.<set>.<locale>` in `fleet.yaml`:
+
+```
+cues/
+  ring.wav  end.wav                 shared, locale-neutral
+  en/        ready attention busy established disconnected  .wav
+  da/        klar  giv_agt   optaget etableret afbrudt      .wav
+  en-pirate/ same names as en
+  da-pirate/ same names as da
+```
+
+The default locale's set must load or the fleet refuses to boot. Any
+other locale that is missing is skipped with a warning; guilds set to it
+hear the default locale's cues until the files are installed.
+
+Audio files are gitignored. `./generate-cues.sh` produces all four locales
+with espeak-ng (`LOCALES="en-pirate" ./generate-cues.sh` for a subset);
+`scripts/gen-cues.sh` makes sine-wave placeholders; `generate.sh` is the
+Piper variant for a warmer voice.

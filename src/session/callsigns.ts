@@ -19,8 +19,20 @@ export const CALLSIGN_MAX = 24;
 /** Discord channel names cap at 100 chars, but we prepend `🛰️ ` — 24 keeps things readable. */
 const CALLSIGN_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} '_-]*[\p{L}\p{N}]$/u;
 
+/**
+ * Why a callsign was refused. The message on the Error is English for
+ * logs; handlers render the user-facing text from the guild's string
+ * table via `code` + `callsign`.
+ */
+export type CallsignErrorCode = 'too_short' | 'too_long' | 'pattern' | 'taken';
+
 export class CallsignError extends Error {
-  constructor(message: string) { super(message); this.name = 'CallsignError'; }
+  constructor(
+    message: string,
+    readonly code: CallsignErrorCode,
+    /** The offending callsign, present for `taken`. */
+    readonly callsign: string | null = null,
+  ) { super(message); this.name = 'CallsignError'; }
 }
 
 export interface CallsignRow {
@@ -32,14 +44,15 @@ export interface CallsignRow {
 export function validateCallsign(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length < CALLSIGN_MIN) {
-    throw new CallsignError(`callsign must be at least ${CALLSIGN_MIN} characters`);
+    throw new CallsignError(`callsign must be at least ${CALLSIGN_MIN} characters`, 'too_short');
   }
   if (trimmed.length > CALLSIGN_MAX) {
-    throw new CallsignError(`callsign must be at most ${CALLSIGN_MAX} characters`);
+    throw new CallsignError(`callsign must be at most ${CALLSIGN_MAX} characters`, 'too_long');
   }
   if (!CALLSIGN_PATTERN.test(trimmed)) {
     throw new CallsignError(
       'callsign may contain letters, numbers, spaces, hyphens, underscores and apostrophes only, and must start and end with a letter or number',
+      'pattern',
     );
   }
   return trimmed;
@@ -54,7 +67,7 @@ export function registerCallsign(
     `SELECT user_id FROM callsigns WHERE guild_id = ? AND callsign = ? COLLATE NOCASE AND user_id != ?`,
   ).get(guildId, callsign, userId) as { user_id: string } | undefined;
   if (conflict !== undefined) {
-    throw new CallsignError(`callsign "${callsign}" is already registered by another member in this guild`);
+    throw new CallsignError(`callsign "${callsign}" is already registered by another member in this guild`, 'taken', callsign);
   }
   db.prepare(`
     INSERT INTO callsigns (guild_id, user_id, callsign, registered_at)

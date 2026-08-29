@@ -16,16 +16,20 @@
 
 import { MessageFlags } from 'discord.js';
 import { intEnv, loadEnv, optionalEnv } from './lib/env.js';
-import { loadConfig, redactMember } from './lib/config.js';
+import { loadConfig, redactMember, type Locale } from './lib/config.js';
+import { stringsFor, type Strings } from './lib/i18n.js';
 import { openDb } from './lib/db.js';
-import { loadCueSet, resolveCuePaths, type CueSet } from './lib/cues.js';
+import { loadCueLibrary, type CueLibrary } from './lib/cues.js';
 import { bootSweep, formatSweep } from './fleet/boot-sweep.js';
 import { runReconciliation } from './fleet/reconcile.js';
 import { Fleet } from './fleet/manager.js';
 import { startStatusServer } from './fleet/status.js';
 import { Events } from 'discord.js';
 import { makeRegistrar, type SubcommandHandler } from './commands/registrar.js';
-import { makeInitHandler } from './commands/init.js';
+import { makeWatchChannelHandler } from './commands/watch-channel.js';
+import { makeSetLanguageHandler } from './commands/set-language.js';
+import { SUBCOMMANDS } from './commands/star-comms.js';
+import { getGuildLocale } from './session/guild-row.js';
 import {
   makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
 } from './commands/callsigns.js';
@@ -55,15 +59,28 @@ async function main(): Promise<void> {
   const sweep = bootSweep(db);
   console.log(formatSweep(sweep));
 
+  // Language is per guild (`/star-comms set-language`); every reply,
+  // button label and cue lookup resolves through these two closures.
+  const localeFor = (guildId: string): Locale => getGuildLocale(db, guildId, config.defaults.locale);
+  const strings = (guildId: string): Strings => stringsFor(localeFor(guildId));
+
   // Cues are loaded before the fleet touches voice: an invalid asset should
-  // fail the boot loud, not silently mis-play later.
-  let cues: CueSet | null = null;
+  // fail the boot loud, not silently mis-play later. Every locale with a
+  // cue block loads; the default locale is mandatory, the rest degrade to
+  // it (with a warning) so a guild can pick a language before its WAVs
+  // are installed.
+  let cues: CueLibrary | null = null;
   try {
-    const paths = resolveCuePaths(config.raw, config.defaults.cueSet, config.defaults.locale, configPath);
-    cues = await loadCueSet(paths);
-    console.log(`cues: loaded ${cues.summary().length} assets`);
-    for (const c of cues.summary()) {
-      console.log(`  ${c.name.padEnd(10)} ${String(c.durationMs).padStart(5)} ms  ${c.packets} packets  ${c.path}`);
+    cues = await loadCueLibrary(
+      config.raw, config.defaults.cueSet, config.defaults.locale, configPath,
+      (locale, reason) => console.warn(`cues: ${locale} skipped — ${reason}; falls back to ${config.defaults.locale}`),
+    );
+    for (const locale of cues.loadedLocales()) {
+      const set = cues.forLocale(locale);
+      console.log(`cues[${locale}]: loaded ${set.summary().length} assets`);
+      for (const c of set.summary()) {
+        console.log(`  ${c.name.padEnd(12)} ${String(c.durationMs).padStart(5)} ms  ${c.packets} packets  ${c.path}`);
+      }
     }
   } catch (err) {
     console.warn(`cues: not loaded — ${err instanceof Error ? err.message : String(err)}`);
@@ -110,21 +127,29 @@ async function main(): Promise<void> {
   controllerClient.on(Events.ShardResume, () => onControllerReconnected('resume'));
   controllerClient.on(Events.ShardReady, () => onControllerReconnected('shard-ready'));
 
+  // `set-language` re-registers the guild's slash commands so their
+  // descriptions follow the new language; the registrar is created
+  // after the handler map, hence the late binding.
+  let registrar: ReturnType<typeof makeRegistrar> | null = null;
   const handlers: Record<string, SubcommandHandler> = {
-    init: makeInitHandler(config, db),
-    register: makeRegisterHandler(db),
-    unregister: makeUnregisterHandler(db),
-    callsign: makeCallsignHandler(db),
-    status: async (interaction) => {
+    [SUBCOMMANDS.watchChannel]: makeWatchChannelHandler(config, db, strings),
+    [SUBCOMMANDS.setLanguage]: makeSetLanguageHandler({
+      config, db, strings, cues,
+      onChanged: async (guildId) => { await registrar?.reregister(guildId); },
+    }),
+    [SUBCOMMANDS.register]: makeRegisterHandler(db, strings),
+    [SUBCOMMANDS.unregister]: makeUnregisterHandler(db, strings),
+    [SUBCOMMANDS.callsign]: makeCallsignHandler(db, strings),
+    [SUBCOMMANDS.status]: async (interaction) => {
       const bots = fleet.states();
-      const lines = ['**Star Comms fleet status**'];
+      const lines = [strings(interaction.guildId ?? '').status.title];
       for (const b of bots) {
         lines.push(`\`${b.role.padEnd(10)}\` **${b.nato}** — ${b.status} ${b.tag ?? ''} guilds=${b.guildIds.length}`);
       }
       await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
     },
   };
-  const registrar = makeRegistrar(config.controller, fleet.controllerClient(), handlers);
+  registrar = makeRegistrar(config.controller, fleet.controllerClient(), handlers, localeFor);
   await registrar.start();
 
   // Hail service. Requires cues; if cues never loaded, we surface a
@@ -132,7 +157,7 @@ async function main(): Promise<void> {
   // than crashing at cue-lookup time.
   const hails = cues !== null
     ? new HailManager({
-        db, fleet, cues,
+        db, fleet, cues, localeFor,
         silenceCloseMs: config.defaults.hailSilenceCloseMs,
         maxHoldMs: config.defaults.hailMaxHoldMs,
         ringIntervalMs: config.defaults.ringIntervalMs,
@@ -146,7 +171,7 @@ async function main(): Promise<void> {
   // Component + modal routing. `sc:panel:` and `sc:hail:` prefixes are
   // routed here; everything else falls through to the slash registrar's
   // own listener.
-  const dispatchPanel = hails !== null ? makePanelDispatcher({ db, fleet, hails }) : null;
+  const dispatchPanel = hails !== null ? makePanelDispatcher({ db, fleet, hails, strings }) : null;
   fleet.controllerClient().on(Events.InteractionCreate, (interaction) => {
     if (interaction.isChatInputCommand()) return;
     if (!('customId' in interaction) || typeof interaction.customId !== 'string') return;
@@ -177,16 +202,11 @@ async function main(): Promise<void> {
       const status = hails.handleAcceptDecline(
         hailId, accept ? 'accepted' : 'declined', interaction.user.id,
       );
+      const s = strings(interaction.guildId ?? '');
       if (status === 'not_owner') {
-        void interaction.reply({
-          content: 'Only the vessel owner can respond to this hail.',
-          flags: MessageFlags.Ephemeral,
-        }).catch(() => {});
+        void interaction.reply({ content: s.hail.onlyOwnerResponds, flags: MessageFlags.Ephemeral }).catch(() => {});
       } else if (status === 'not_ringing') {
-        void interaction.reply({
-          content: 'This hail is no longer waiting for a response.',
-          flags: MessageFlags.Ephemeral,
-        }).catch(() => {});
+        void interaction.reply({ content: s.hail.notRinging, flags: MessageFlags.Ephemeral }).catch(() => {});
       } else {
         void interaction.deferUpdate().catch(() => {});
       }
@@ -194,7 +214,7 @@ async function main(): Promise<void> {
     }
   });
 
-  const vessels = startVesselService({ fleet, db, hails });
+  const vessels = startVesselService({ fleet, db, hails, strings });
 
   const server = startStatusServer({ port, fleet, sweep, startedAt });
 

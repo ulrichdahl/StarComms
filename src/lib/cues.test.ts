@@ -3,9 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import {
-  CUE_NAMES, loadCueSet, resolveCuePaths, type CuePaths,
-} from './cues.js';
+import { CUE_NAMES, loadCueSet, resolveCuePaths, type CuePaths, CueLibrary, CueSet } from './cues.js';
 
 /**
  * These tests shell out to ffmpeg to synthesise fixture WAVs, then run
@@ -184,5 +182,28 @@ describe('placeholder cue files', () => {
     const p = 'cues/en/ready.wav';
     if (!existsSync(p)) return; // placeholders not generated in this environment
     expect(statSync(p).size).toBeGreaterThan(0);
+  });
+});
+
+describe('CueLibrary', () => {
+  const fake = (): CueSet => new CueSet(new Map());
+
+  it('returns a locale\'s own set when loaded', () => {
+    const en = fake(); const da = fake();
+    const lib = new CueLibrary(new Map([['en', en], ['da', da]]), 'en');
+    expect(lib.forLocale('da')).toBe(da);
+    expect(lib.has('da')).toBe(true);
+  });
+
+  it('falls back to the default locale for a locale without audio', () => {
+    const en = fake();
+    const lib = new CueLibrary(new Map([['en', en]]), 'en');
+    expect(lib.has('en-pirate')).toBe(false);
+    expect(lib.forLocale('en-pirate')).toBe(en);
+    expect(lib.loadedLocales()).toEqual(['en']);
+  });
+
+  it('refuses a library without the default locale', () => {
+    expect(() => new CueLibrary(new Map([['da', fake()]]), 'en')).toThrow(/default locale/);
   });
 });

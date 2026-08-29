@@ -7,17 +7,20 @@
  * immediately, whereas global commands can take up to an hour to
  * propagate — the difference matters when an operator is iterating.
  *
+ * Commands are registered with descriptions in the guild's language
+ * (`localeFor(guildId)`); `/star-comms set-language` calls
+ * `reregister(guildId)` so the descriptions follow the change.
+ *
  * Interactions are dispatched to handler callables keyed by subcommand
- * name. The subcommand set grows as the build order (Spec 1.0 §15)
- * introduces `init`, `register`, `unregister`, `callsign`, and the
- * rest.
+ * name.
  */
 
 import {
   Events, MessageFlags, REST, Routes,
   type ChatInputCommandInteraction, type Client,
 } from 'discord.js';
-import type { ControllerConfig } from '../lib/config.js';
+import type { ControllerConfig, Locale } from '../lib/config.js';
+import { stringsFor } from '../lib/i18n.js';
 import { starCommsCommand } from './star-comms.js';
 
 export type SubcommandHandler = (interaction: ChatInputCommandInteraction) => Promise<void>;
@@ -27,6 +30,8 @@ export interface RegistrarConfig {
   controllerAppId: string;
   controllerToken: string;
   handlers: Record<string, SubcommandHandler>;
+  /** The guild's current language — drives command descriptions. */
+  localeFor: (guildId: string) => Locale;
 }
 
 export class SlashRegistrar {
@@ -63,13 +68,19 @@ export class SlashRegistrar {
     })));
   }
 
+  /** Re-register in one guild — used after its language changes. */
+  async reregister(guildId: string): Promise<void> {
+    await this.registerFor(guildId);
+  }
+
   private async registerFor(guildId: string): Promise<void> {
-    const body = [starCommsCommand()];
+    const locale = this.cfg.localeFor(guildId);
+    const body = [starCommsCommand(stringsFor(locale))];
     await this.rest.put(
       Routes.applicationGuildCommands(this.cfg.controllerAppId, guildId),
       { body },
     );
-    console.log(`registrar: /star-comms available in guild ${guildId}`);
+    console.log(`registrar: /star-comms available in guild ${guildId} (${locale})`);
   }
 
   private async dispatch(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -102,11 +113,13 @@ export function makeRegistrar(
   controller: ControllerConfig,
   controllerClient: Client,
   handlers: Record<string, SubcommandHandler>,
+  localeFor: (guildId: string) => Locale,
 ): SlashRegistrar {
   return new SlashRegistrar({
     controllerClient,
     controllerAppId: controller.applicationId,
     controllerToken: controller.token,
     handlers,
+    localeFor,
   });
 }

@@ -131,7 +131,7 @@
     <b>State</b> SQLite (WAL) on host bind mount · <b>Deploy</b> Docker Compose, dev + prod overlays<br>
     <b>Trigger</b> UI buttons and slash commands<br>
     <b>Protocol</b> hail → cue pair → bidirectional relay → per-channel end button or 10 s all-quiet<br>
-    <b>Locale</b> en, da
+    <b>Locale</b> per guild via <code>/star-comms set-language</code>: en, da, en-pirate, da-pirate
   </div>
 
   <nav class="toc">
@@ -224,7 +224,9 @@
 
   <h3>Setup</h3>
 
-  <p><code>/star-comms init</code> presents the invoker with a select menu of the guild's voice channels. The invoker picks the join-to-create trigger, and the id is stored in <code>guilds.join_to_create_channel_id</code>. No channels are created by init. Re-running <code>/star-comms init</code> replaces the stored id.</p>
+  <p><code>/star-comms watch-channel</code> presents the invoker with a select menu of the guild's voice channels. The invoker picks the join-to-create trigger, and the id is stored in <code>guilds.join_to_create_channel_id</code>. No channels are created by this command. Re-running <code>/star-comms watch-channel</code> replaces the stored id.</p>
+
+  <p><code>/star-comms set-language</code> presents a select menu of the supported locales (labels written in the language itself) and stores the choice in <code>guilds.locale</code>. Language is a <em>guild</em> setting: Discord renders a bot's buttons and posts identically for every member, so there is no per-user variant. The choice governs every reply, every button label, the slash-command descriptions (re-registered for that guild on change) and the voice cues. Cue audio is per locale (<code>cue_sets.&lt;set&gt;.&lt;locale&gt;</code>); a locale whose audio is not installed is still selectable — text switches at once and the default locale's cues play until the files exist. Panels already posted re-render in the new language the next time they are used.</p>
 
   <h3>Vessel channel creation</h3>
 
@@ -436,7 +438,8 @@
   <div class="tw"><table>
     <thead><tr><th>Command</th><th>Purpose</th><th>Who can run it</th></tr></thead>
     <tbody>
-      <tr><td><code>/star-comms init</code></td><td>Select the guild's join-to-create channel; enable Star Comms in this guild</td><td>Manage Guild</td></tr>
+      <tr><td><code>/star-comms watch-channel</code></td><td>Select the guild's join-to-create channel; enable Star Comms in this guild</td><td>Manage Guild</td></tr>
+      <tr><td><code>/star-comms set-language</code></td><td>Choose the guild's language (en, da, en-pirate, da-pirate) for text and cues</td><td>Manage Guild</td></tr>
       <tr><td><code>/star-comms status</code></td><td>Fleet health + list of active hails + bot pool free/busy</td><td>Manage Guild</td></tr>
       <tr><td><code>/star-comms register &lt;callsign&gt;</code></td><td>Set or replace the invoker's callsign</td><td>Any member</td></tr>
       <tr><td><code>/star-comms unregister</code></td><td>Remove the invoker's callsign</td><td>Any member</td></tr>

@@ -12,7 +12,17 @@
 import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 
-export type Locale = 'en' | 'da';
+/**
+ * Guild-selectable languages. Text (buttons, replies, command
+ * descriptions) and voice cues are both keyed by this id. The pirate
+ * variants exist for event weeks; they are full locales, not flags on
+ * en/da, so the cue loader and the string tables treat them uniformly.
+ */
+export const LOCALES = ['en', 'da', 'en-pirate', 'da-pirate'] as const;
+export type Locale = typeof LOCALES[number];
+export function isLocale(x: unknown): x is Locale {
+  return typeof x === 'string' && (LOCALES as readonly string[]).includes(x);
+}
 
 export interface FleetMember {
   /** NATO identifier for a relay bot — alfa/bravo/charlie/… Also the token_env key. */
@@ -225,7 +235,7 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv = process.env): 
 
   const rd = (isRecord(raw.defaults) ? raw.defaults : {}) as RawDefaults;
   const defaults: FleetDefaults = {
-    locale: pickEnum(rd.locale, 'defaults.locale', ['en', 'da'] as const, DEFAULTS.locale),
+    locale: pickEnum(rd.locale, 'defaults.locale', LOCALES, DEFAULTS.locale),
     cueSet: typeof rd.cue_set === 'string' ? rd.cue_set : DEFAULTS.cueSet,
     cueDurationMs: pickInt(rd.cue_duration_ms, 'defaults.cue_duration_ms', DEFAULTS.cueDurationMs),
     ringIntervalMs: pickInt(rd.ring_interval_ms, 'defaults.ring_interval_ms', DEFAULTS.ringIntervalMs),

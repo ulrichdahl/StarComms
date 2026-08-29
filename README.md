@@ -83,15 +83,27 @@ Expected: `verdict: "ok"`, four members with `loggedIn: true`,
 In Discord, `/star-comms status` should return an ephemeral fleet
 snapshot.
 
-### 5. Init the guild + create your first vessel (step 2)
+### 5. Set up the guild + create your first vessel (step 2)
 
 ```
-/star-comms init
+/star-comms watch-channel
 ```
 
 Pick your guild's existing join-to-create voice channel from the
 select menu (many game-community servers already have one — e.g.
 `+ Create Channel`). Star Comms remembers that channel per guild.
+
+```
+/star-comms set-language
+```
+
+Optional — pick the language Star Comms uses in this guild for
+buttons, replies, command descriptions and voice cues: English,
+Dansk, English (Pirate) or Dansk (Sørøver). Language is per guild,
+not per user; Discord shows a bot's buttons identically to everyone.
+Cue audio for the chosen locale must exist under `cues/<locale>/`
+(generate all four with `./generate-cues.sh`); until it does, the
+default locale's cues play.
 
 Now join that channel from a regular user account. Expected:
 

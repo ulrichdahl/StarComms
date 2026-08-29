@@ -207,3 +207,13 @@ describe('redactMember', () => {
     expect(redacted.nato).toBe('alfa');
   });
 });
+
+describe('defaults.locale', () => {
+  it('accepts every guild-selectable locale', async () => {
+    const { LOCALES, isLocale } = await import('./config.js');
+    expect(LOCALES).toEqual(['en', 'da', 'en-pirate', 'da-pirate']);
+    for (const l of LOCALES) expect(isLocale(l)).toBe(true);
+    expect(isLocale('en-GB')).toBe(false);
+    expect(isLocale(undefined)).toBe(false);
+  });
+});
