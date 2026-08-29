@@ -189,7 +189,7 @@ const en: Strings = {
       `**Star Comms — language for ${guild}**\nCurrently: ${current}.\n\n` +
       `Pick the language Star Comms uses for buttons, messages and voice cues in this server.`,
     placeholder: 'Pick a language',
-    set: (label) => `Language set to **${label}**. Existing control panels update the next time they are used.`,
+    set: (label) => `Language set to **${label}**. Control panels in this server have been updated.`,
     noCues: (fallback) => ` Voice cues for this language are not installed — ${fallback} cues play until they are.`,
     cancelled: 'Nothing selected — cancelled.',
     timeout: 'Cancelled — no language selected within 60 seconds.',
@@ -329,7 +329,7 @@ const da: Strings = {
       `**Star Comms — sprog for ${guild}**\nNuværende: ${current}.\n\n` +
       `Vælg det sprog Star Comms skal bruge til knapper, beskeder og stemmesignaler på denne server.`,
     placeholder: 'Vælg et sprog',
-    set: (label) => `Sproget er nu **${label}**. Eksisterende kontrolpaneler opdateres, næste gang de bruges.`,
+    set: (label) => `Sproget er nu **${label}**. Kontrolpanelerne på denne server er opdateret.`,
     noCues: (fallback) => ` Stemmesignaler på dette sprog er ikke installeret — der bruges ${fallback}, indtil de er.`,
     cancelled: 'Intet valgt — afbrudt.',
     timeout: 'Afbrudt — intet sprog valgt inden for 60 sekunder.',
@@ -469,7 +469,7 @@ const enPirate: Strings = {
       `**Star Comms — tongue fer ${guild}**\nCurrently: ${current}.\n\n` +
       `Pick the tongue Star Comms speaks fer buttons, messages and voice cues aboard this ship.`,
     placeholder: 'Pick a tongue',
-    set: (label) => `Tongue set to **${label}**, arr! Control panels already posted update next time they be used.`,
+    set: (label) => `Tongue set to **${label}**, arr! Every helm aboard this ship now speaks it.`,
     noCues: (fallback) => ` Voice cues in this tongue ain\'t installed yet — ${fallback} cues play until they be.`,
     cancelled: 'Nothin\' picked — belay that.',
     timeout: 'Belayed — no tongue picked within 60 seconds.',
@@ -609,7 +609,7 @@ const daPirate: Strings = {
       `**Star Comms — tungemål for ${guild}**\nNuværende: ${current}.\n\n` +
       `Vælg det tungemål Star Comms taler i knapper, beskeder og stemmesignaler om bord på dette skib.`,
     placeholder: 'Vælg et tungemål',
-    set: (label) => `Tungemålet er nu **${label}**, arr! Kontrolpaneler, der allerede er slået op, opdateres, næste gang de bruges.`,
+    set: (label) => `Tungemålet er nu **${label}**, arr! Hvert ror om bord på dette skib taler det nu.`,
     noCues: (fallback) => ` Stemmesignaler på dette tungemål er ikke lastet endnu — der bruges ${fallback}, indtil de er.`,
     cancelled: 'Intet valgt — ordren er trukket tilbage.',
     timeout: 'Trukket tilbage — intet tungemål valgt inden for 60 sekunder.',

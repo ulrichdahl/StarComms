@@ -6,8 +6,8 @@
  * The invoker gets a StringSelectMenu of every supported locale
  * (labels written in the language itself); the choice is stored on
  * `guilds.locale`, the slash commands are re-registered so their
- * descriptions follow, and the confirmation is already in the new
- * language.
+ * descriptions follow, every live control panel in the guild is
+ * re-rendered, and the confirmation is already in the new language.
  *
  * Cue audio is per locale too. A locale whose WAVs are not installed
  * is still selectable — text switches immediately, and the reply
@@ -98,7 +98,14 @@ export function makeSetLanguageHandler(deps: SetLanguageDeps) {
         await selection.update({ content: s.setLanguage.cancelled, components: [] });
         return;
       }
+      // Acknowledge within Discord's 3 s window, then do the work —
+      // re-rendering every panel in a busy guild can take a few
+      // seconds and the confirmation claims it is done.
+      await selection.deferUpdate();
       setGuildLocale(db, guild.id, picked);
+      await deps.onChanged(guild.id, picked).catch((err) => {
+        console.error(`set-language: post-change work in ${guild.id} failed: ${err instanceof Error ? err.message : err}`);
+      });
 
       // Confirm in the *new* language — the operator should see the
       // switch take effect in the very reply that reports it.
@@ -109,11 +116,7 @@ export function makeSetLanguageHandler(deps: SetLanguageDeps) {
         const fallback = deps.cues?.defaultLocale ?? config.defaults.locale;
         content += ns.setLanguage.noCues(LOCALE_META[fallback].label);
       }
-      await selection.update({ content, components: [] });
-
-      await deps.onChanged(guild.id, picked).catch((err) => {
-        console.error(`set-language: re-register in ${guild.id} failed: ${err instanceof Error ? err.message : err}`);
-      });
+      await selection.editReply({ content, components: [] });
     } catch {
       await interaction.editReply({ content: s.setLanguage.timeout, components: [] }).catch(() => {});
     }

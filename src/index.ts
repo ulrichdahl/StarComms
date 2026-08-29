@@ -30,6 +30,7 @@ import { makeWatchChannelHandler } from './commands/watch-channel.js';
 import { makeSetLanguageHandler } from './commands/set-language.js';
 import { SUBCOMMANDS } from './commands/star-comms.js';
 import { getGuildLocale } from './session/guild-row.js';
+import { refreshGuildPanels } from './session/panel-refresh.js';
 import {
   makeCallsignHandler, makeRegisterHandler, makeUnregisterHandler,
 } from './commands/callsigns.js';
@@ -128,14 +129,19 @@ async function main(): Promise<void> {
   controllerClient.on(Events.ShardReady, () => onControllerReconnected('shard-ready'));
 
   // `set-language` re-registers the guild's slash commands so their
-  // descriptions follow the new language; the registrar is created
-  // after the handler map, hence the late binding.
+  // descriptions follow the new language, and re-renders every live
+  // control panel in the guild; the registrar is created after the
+  // handler map, hence the late binding.
   let registrar: ReturnType<typeof makeRegistrar> | null = null;
   const handlers: Record<string, SubcommandHandler> = {
     [SUBCOMMANDS.watchChannel]: makeWatchChannelHandler(config, db, strings),
     [SUBCOMMANDS.setLanguage]: makeSetLanguageHandler({
       config, db, strings, cues,
-      onChanged: async (guildId) => { await registrar?.reregister(guildId); },
+      onChanged: async (guildId, locale) => {
+        const panels = await refreshGuildPanels(db, fleet.controllerClient(), guildId, stringsFor(locale));
+        console.log(`set-language: ${guildId} → ${locale}; panels updated=${panels.updated} skipped=${panels.skipped}`);
+        await registrar?.reregister(guildId);
+      },
     }),
     [SUBCOMMANDS.register]: makeRegisterHandler(db, strings),
     [SUBCOMMANDS.unregister]: makeUnregisterHandler(db, strings),
