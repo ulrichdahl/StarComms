@@ -475,7 +475,7 @@ async function transferIfOwnerStillAbsent(
   const successor = humans.first();
   if (successor === undefined) return;
 
-  const notice = cfg.strings(channel.guildId).vessel.transferred(vessel.owner_user_id, successor.toString());
+  const notice = cfg.strings(channel.guildId).vessel.transferred(successor.toString());
   const result = await transferOwnership(
     cfg, channel, vessel.owner_user_id, successor, notice, 'Star Comms: ownership transfer (owner left)',
   );

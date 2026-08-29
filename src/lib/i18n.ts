@@ -142,9 +142,10 @@ export interface Strings {
   };
   vessel: {
     cannotMoveNotice: string;
-    transferred(oldOwnerUserId: string, successorMention: string): string;
+    /** Owner left; ownership auto-passed. Names only the new owner. */
+    transferred(successorMention: string): string;
     /** Owner used the Transfer button. */
-    handedOver(oldOwnerUserId: string, successorMention: string): string;
+    handedOver(successorMention: string): string;
   };
 }
 
@@ -307,8 +308,8 @@ const en: Strings = {
     cannotMoveNotice:
       '\n_Discord blocks the bot from moving you (most often because you are the server owner). ' +
       'Join this channel manually to activate it._',
-    transferred: (old, succ) => `⚓ <@${old}> left. Ownership passed to ${succ}. Hails disabled.`,
-    handedOver: (old, succ) => `⚓ <@${old}> handed the channel over to ${succ}. Hails disabled.`,
+    transferred: (succ) => `⚓ Ownership passed to ${succ}. Hails disabled.`,
+    handedOver: (succ) => `⚓ The channel was handed over to ${succ}. Hails disabled.`,
   },
 };
 
@@ -457,8 +458,8 @@ const da: Strings = {
     cannotMoveNotice:
       '\n_Discord tillader ikke botten at flytte dig (oftest fordi du er serverejer). ' +
       'Join denne kanal manuelt for at aktivere den._',
-    transferred: (old, succ) => `⚓ <@${old}> forlod kanalen. Ejerskabet er overdraget til ${succ}. Kald slået fra.`,
-    handedOver: (old, succ) => `⚓ <@${old}> overdrog kanalen til ${succ}. Kald slået fra.`,
+    transferred: (succ) => `⚓ Ejerskabet er overdraget til ${succ}. Kald slået fra.`,
+    handedOver: (succ) => `⚓ Kanalen er overdraget til ${succ}. Kald slået fra.`,
   },
 };
 
@@ -607,8 +608,8 @@ const enPirate: Strings = {
     cannotMoveNotice:
       '\n_Discord won\'t let the bot haul ye aboard (most often because ye own the ship). ' +
       'Board this channel yerself to raise the colours._',
-    transferred: (old, succ) => `⚓ <@${old}> abandoned ship. ${succ} be the new cap\'n. Hails disabled.`,
-    handedOver: (old, succ) => `⚓ <@${old}> handed the helm to ${succ}. Hails disabled.`,
+    transferred: (succ) => `⚓ ${succ} be the new cap\'n. Hails disabled.`,
+    handedOver: (succ) => `⚓ The helm be handed to ${succ}. Hails disabled.`,
   },
 };
 
@@ -757,8 +758,8 @@ const daPirate: Strings = {
     cannotMoveNotice:
       '\n_Discord lader ikke botten hale dig om bord (oftest fordi du ejer skibet). ' +
       'Gå selv om bord i denne kanal for at hejse flaget._',
-    transferred: (old, succ) => `⚓ <@${old}> forlod skibet. ${succ} er ny kaptajn. Kald slået fra.`,
-    handedOver: (old, succ) => `⚓ <@${old}> gav roret til ${succ}. Kald slået fra.`,
+    transferred: (succ) => `⚓ ${succ} er ny kaptajn. Kald slået fra.`,
+    handedOver: (succ) => `⚓ Roret er givet til ${succ}. Kald slået fra.`,
   },
 };
 
