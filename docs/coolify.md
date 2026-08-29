@@ -84,35 +84,38 @@ trigger one deploy first, then come back.
 
 ### Cues
 
-The cue directory is a host directory bind-mounted at `/app/cues`. It
-starts empty; populate it either way below, then **Restart** — cues are
-pre-encoded and cached in memory at boot.
+The cue directory is a host directory bind-mounted at `/app/cues`.
+**On every start the container fills in whatever is missing**: the
+entrypoint runs `generate-cues.sh` in skip-existing mode (espeak-ng +
+ffmpeg are in the image), so a first deploy boots with a complete set
+for all four locales and a file that already exists is never touched.
 
-**Option A — generate inside the container.** The image ships
-`generate-cues.sh` plus espeak-ng and ffmpeg. The host directory is
-created by Coolify as root, and the container runs as `node` (uid 1000),
-so make it writable once from the host:
+One prerequisite: Coolify creates the host directory as root and the
+container runs as `node` (uid 1000). Make it writable once:
 
 ```bash
 chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues
 ```
 
-Then Coolify → app → **Terminal** (pick the `bot` container):
+then **Restart**. Until that is done the boot log says
+`cues: /app/cues is not writable by uid 1000 — skipping generation` and
+the fleet starts without cue audio (hails then fail at cue lookup).
+
+**Replacing voices.** Drop your own WAVs (48 kHz stereo; Piper voices
+sound warmer than espeak — see `generate.sh`) into the host directory
+under the same file names, or `scp -r cues/. <host>:/data/coolify/applications/<APP_UUID>/cues/`.
+Existing files win; to force regeneration of a file, delete it and
+restart. The spoken lines live at the top of `generate-cues.sh`.
+
+**Manual run.** Coolify → app → **Terminal** → `bot` container:
 
 ```bash
-./generate-cues.sh                       # all four locales + ring/end
-LOCALES="en-pirate da-pirate" ./generate-cues.sh   # a subset
-ls -R cues
+./generate-cues.sh                                  # regenerate everything (overwrites)
+SKIP_EXISTING=1 LOCALES="da-pirate" ./generate-cues.sh   # only what is missing, one locale
 ```
 
-**Option B — copy from a workstation.** Run `./generate-cues.sh` locally
-(or bring your own WAVs — Piper voices sound warmer, see
-`generate.sh`) and copy the tree in:
-
-```bash
-scp -r cues/. <coolify-host>:/data/coolify/applications/<APP_UUID>/cues/
-ssh <coolify-host> 'chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues'
-```
+Set `GENERATE_CUES=0` in the app's environment to disable the boot-time
+step entirely (e.g. when every cue is hand-made).
 
 Expected layout, matching the paths in `fleet.yaml`:
 
@@ -126,9 +129,10 @@ cues/
 ```
 
 Only locales declared under `cue_sets` in `fleet.yaml` are loaded. The
-default locale must load or the container will crash-loop (expected
-until this step is done); any other locale that is missing is skipped
-with a warning and guilds set to it hear the default locale's audio.
+default locale must load or the container will crash-loop; any other
+locale that is missing is skipped with a warning and guilds set to it
+hear the default locale's audio. Cues are encoded and cached in memory
+at boot, so a restart is needed after changing files.
 
 ### `SqliteError: unable to open database file`
 

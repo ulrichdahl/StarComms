@@ -29,7 +29,7 @@ RUN npm run build && npm prune --omit=dev
 FROM base AS runtime
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json generate-cues.sh ./
+COPY package.json generate-cues.sh docker-entrypoint.sh ./
 # The SQLite volume mounts at /data. Create it owned by `node` here: Docker
 # copies the image directory's ownership onto an empty named volume on first
 # mount, so the unprivileged process can create starcomms.db. Without this
@@ -40,7 +40,8 @@ COPY package.json generate-cues.sh ./
 RUN mkdir -p /data /app/cues && chown node:node /data /app/cues
 USER node
 EXPOSE 3000
-CMD ["node", "dist/index.js"]
+# Entrypoint fills in missing cue audio, then execs node.
+CMD ["./docker-entrypoint.sh"]
 
 # Dev target: full toolchain, sources mounted by the compose override.
 # Exec tsx directly (not `npm run`) so SIGTERM reaches the Node process and
