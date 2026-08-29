@@ -3,6 +3,30 @@
 All notable changes to Star Comms. Versions are semver `major.minor.patch`;
 each entry mirrors the GitHub release description on the matching tag.
 
+## 0.2.1 — 2026-08-29
+
+Patch release: cue audio is generated automatically inside the deployed container.
+
+### What's in this release
+
+#### Cue audio generates itself on boot
+- The runtime image now ships `generate-cues.sh` together with **espeak-ng** (alongside ffmpeg), and a new `docker-entrypoint.sh` runs it in skip-existing mode against `/app/cues` before starting the fleet. A first deploy boots with a complete cue set for all four locales (22 files); a file that already exists — e.g. a hand-made Piper voice — is never overwritten. Delete a file and restart to regenerate it.
+- `generate-cues.sh` gained `SKIP_EXISTING=1` and prints a `N written, M kept` summary. It can also be run by hand from Coolify → Terminal (`LOCALES="da-pirate" SKIP_EXISTING=1 ./generate-cues.sh`).
+- `GENERATE_CUES=0` in the environment disables the boot-time step.
+- The entrypoint `exec`s node, so SIGTERM still reaches the drain handler on stop.
+
+#### Coolify compose
+- The `./cues:/app/cues` bind mount is no longer read-only, and `/app/cues` is created owned by `node` in the image.
+- If the host directory is not writable by uid 1000 the boot log prints a `chown -R 1000:1000 …` hint and the fleet still starts (without cue audio) — no crash-loop from this step.
+
+#### Docs
+- `docs/coolify.md` "Cues" section rewritten: one-time `chown`, automatic generation, replacing voices, manual run, `GENERATE_CUES`.
+
+### Upgrading from 0.2.0
+1. Redeploy (image rebuild — espeak-ng is added).
+2. Once, on the Coolify host: `chown -R 1000:1000 /data/coolify/applications/<APP_UUID>/cues`
+3. Restart the app. The boot log shows `cues: N written, M kept`; your existing `en` files are kept, the missing locales are generated.
+
 ## 0.2.0 — 2026-08-29
 
 
